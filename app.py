@@ -164,10 +164,69 @@ st.markdown("""
 .overview-box {
     background: linear-gradient(180deg, rgba(9,24,46,0.97), rgba(6,18,34,0.98));
     border: 1px solid rgba(255,255,255,0.08);
-    border-left: 4px solid #e60012;
-    border-radius: 16px;
-    padding: 14px 16px;
+    border-top: 4px solid #e60012;
+    border-radius: 18px;
+    padding: 16px 18px;
     margin-bottom: 12px;
+    min-height: 168px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.02) inset;
+}
+.overview-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.overview-line {
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: #ffffff;
+    line-height: 1.2;
+}
+.overview-process {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #e5e7eb;
+    line-height: 1.2;
+    margin-top: 2px;
+}
+.overview-desc {
+    color: #94a3b8;
+    font-size: 0.88rem;
+    line-height: 1.45;
+    margin-top: 6px;
+    min-height: 40px;
+}
+.overview-risk-wrap {
+    text-align: right;
+    min-width: 78px;
+}
+.overview-risk-label {
+    color: #94a3b8;
+    font-size: 0.76rem;
+    margin-bottom: 2px;
+}
+.overview-risk-value {
+    color: #ffffff;
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1;
+}
+.overview-footer {
+    margin-top: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.overview-mini {
+    color: #cbd5e1;
+    font-size: 0.88rem;
+}
+button[data-baseweb="tab"] {
+    font-weight: 700 !important;
+    font-size: 0.98rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -219,7 +278,7 @@ def generate_data_by_line(line_key: str):
             "vibration": random.randint(25, 90),
             "temperature": random.randint(28, 55)
         }
-    else:  # Line 4
+    else:
         return {
             "helmet": random.choice([True, False]),
             "distance": random.randint(15, 85),
@@ -233,24 +292,15 @@ def calculate_risk_by_line(d, line_key: str):
     reasons = []
 
     if not d["helmet"]:
-        if line_key == "Line 4":
-            risk += 40
-        else:
-            risk += 30
+        risk += 40 if line_key == "Line 4" else 30
         reasons.append("No helmet detected")
 
     if d["distance"] < 30:
-        if line_key == "Line 3":
-            risk += 45
-        else:
-            risk += 40
+        risk += 45 if line_key == "Line 3" else 40
         reasons.append("Worker too close to machine")
 
     if d["vibration"] > 70:
-        if line_key == "Line 3":
-            risk += 45
-        else:
-            risk += 35
+        risk += 45 if line_key == "Line 3" else 35
         reasons.append("High machine vibration")
 
     if d["temperature"] > 60:
@@ -269,8 +319,7 @@ def decision_logic(risk):
         return "HIGH RISK", "STOP MACHINE"
     elif risk > 50:
         return "WARNING", "CHECK SYSTEM"
-    else:
-        return "SAFE", "NORMAL OPERATION"
+    return "SAFE", "NORMAL OPERATION"
 
 
 def ai_solution_by_line(reasons, line_key: str):
@@ -407,13 +456,32 @@ for i, line_key in enumerate(LINE_CONFIG.keys()):
     with overview_cols[i]:
         line_info = LINE_CONFIG[line_key]
         line_now = current_line_data[line_key]
-        st.markdown('<div class="overview-box">', unsafe_allow_html=True)
-        st.markdown(f"**{line_key}**", unsafe_allow_html=True)
-        st.markdown(f"{line_info['name']}", unsafe_allow_html=True)
-        st.markdown(f"<div class='line-caption'>{line_info['description']}</div>", unsafe_allow_html=True)
-        st.markdown(f"Risk: **{line_now['risk']}**", unsafe_allow_html=True)
-        st.markdown(render_status_chip(line_now["status"]), unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        d = line_now["data"]
+
+        st.markdown(f"""
+        <div class="overview-box">
+            <div class="overview-top">
+                <div>
+                    <div class="overview-line">{line_key}</div>
+                    <div class="overview-process">{line_info['name']}</div>
+                </div>
+                <div class="overview-risk-wrap">
+                    <div class="overview-risk-label">Risk</div>
+                    <div class="overview-risk-value">{line_now['risk']}</div>
+                </div>
+            </div>
+
+            <div class="overview-desc">{line_info['description']}</div>
+
+            <div class="overview-footer">
+                <div class="overview-mini">
+                    Helmet: <b>{"YES" if d["helmet"] else "NO"}</b><br>
+                    Temp: <b>{d["temperature"]} °C</b>
+                </div>
+                <div>{render_status_chip(line_now["status"])}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # -------------------------
 # TABS
@@ -474,10 +542,8 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
         with col1:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown('<div class="card-title">Worker Status</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="label">Helmet</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="big-value">{"YES" if d["helmet"] else "NO"}</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="label">Distance</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="big-sub-value">{d["distance"]} cm</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -485,10 +551,8 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
         with col2:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown('<div class="card-title">Machine Status</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="label">Vibration</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="big-value">{d["vibration"]}</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="label">Temperature</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="big-sub-value">{d["temperature"]} °C</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
@@ -496,7 +560,6 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
         with col3:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown('<div class="card-title">Risk Analysis</div>', unsafe_allow_html=True)
-
             st.markdown('<div class="label">Risk Score</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="big-value">{risk}</div>', unsafe_allow_html=True)
             st.markdown(render_status_chip(status), unsafe_allow_html=True)
