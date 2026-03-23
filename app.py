@@ -448,46 +448,32 @@ st.markdown('<div class="sub-title">DENSO-style production safety monitoring acr
 # -------------------------
 # OVERVIEW
 # -------------------------
-st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
+cols = st.columns(4)
 
-overview_cols = st.columns(4, gap="medium")
+for i, line in enumerate(LINE_CONFIG):
+    with cols[i]:
+        info = LINE_CONFIG[line]
+        d = current_data[line]["data"]
+        risk = current_data[line]["risk"]
+        status = current_data[line]["status"]
 
-for i, line_key in enumerate(LINE_CONFIG.keys()):
-    with overview_cols[i]:
-        line_info = LINE_CONFIG[line_key]
-        line_now = current_line_data[line_key]
-        d = line_now["data"]
+        st.markdown(f"### {line}")
+        st.markdown(f"**{info['name']}**")
 
-        overview_html = f"""
-        <div class="overview-box">
-            <div class="overview-top">
-                <div>
-                    <div class="overview-line">{line_key}</div>
-                    <div class="overview-process">{line_info['name']}</div>
-                </div>
-                <div class="overview-risk-wrap">
-                    <div class="overview-risk-label">Risk</div>
-                    <div class="overview-risk-value">{line_now['risk']}</div>
-                </div>
-            </div>
+        st.write(info["description"])
 
-            <div class="overview-desc">
-                {line_info['description']}
-            </div>
+        st.metric("Risk", risk)
 
-            <div class="overview-footer">
-                <div class="overview-mini">
-                    Helmet: <b>{"YES" if d["helmet"] else "NO"}</b><br>
-                    Temp: <b>{d["temperature"]} °C</b>
-                </div>
-                <div>
-                    {render_status_chip(line_now["status"])}
-                </div>
-            </div>
-        </div>
-        """
-        st.markdown(overview_html, unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        col1.write(f"Helmet: {'YES' if d['helmet'] else 'NO'}")
+        col2.write(f"Temp: {d['temperature']} °C")
 
+        if status == "SAFE":
+            st.success("SAFE")
+        elif status == "WARNING":
+            st.warning("WARNING")
+        else:
+            st.error("HIGH RISK")
 # -------------------------
 # TABS
 # -------------------------
