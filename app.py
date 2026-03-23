@@ -450,44 +450,60 @@ st.markdown('<div class="sub-title">DENSO-style production safety monitoring acr
 # -------------------------
 st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
 
-overview_cols = st.columns(4, gap="medium")
+cols = st.columns(4)
 
 for i, line_key in enumerate(LINE_CONFIG.keys()):
-    with overview_cols[i]:
+    with cols[i]:
         line_info = LINE_CONFIG[line_key]
         line_now = current_line_data[line_key]
         d = line_now["data"]
 
-        overview_html = f"""
-        <div class="overview-box">
-            <div class="overview-top">
+        html = f"""
+        <div style="
+            background: linear-gradient(180deg, rgba(9,24,46,0.97), rgba(6,18,34,0.98));
+            border: 1px solid rgba(255,255,255,0.08);
+            border-top: 4px solid #e60012;
+            border-radius: 18px;
+            padding: 16px;
+        ">
+
+            <div style="display:flex; justify-content:space-between;">
                 <div>
-                    <div class="overview-line">{line_key}</div>
-                    <div class="overview-process">{line_info['name']}</div>
+                    <div style="font-weight:800; font-size:1.1rem;">
+                        {line_key}
+                    </div>
+                    <div style="color:#e5e7eb; font-weight:600;">
+                        {line_info['name']}
+                    </div>
                 </div>
-                <div class="overview-risk-wrap">
-                    <div class="overview-risk-label">Risk</div>
-                    <div class="overview-risk-value">{line_now['risk']}</div>
+
+                <div style="text-align:right;">
+                    <div style="font-size:0.75rem; color:#94a3b8;">Risk</div>
+                    <div style="font-size:1.8rem; font-weight:800;">
+                        {line_now['risk']}
+                    </div>
                 </div>
             </div>
 
-            <div class="overview-desc">
+            <div style="color:#94a3b8; margin-top:8px;">
                 {line_info['description']}
             </div>
 
-            <div class="overview-footer">
-                <div class="overview-mini">
+            <div style="margin-top:12px; display:flex; justify-content:space-between;">
+                <div>
                     Helmet: <b>{"YES" if d["helmet"] else "NO"}</b><br>
                     Temp: <b>{d["temperature"]} °C</b>
                 </div>
+
                 <div>
                     {render_status_chip(line_now["status"])}
                 </div>
             </div>
+
         </div>
         """
-        st.markdown(overview_html, unsafe_allow_html=True)
 
+        st.markdown(html, unsafe_allow_html=True)
 # -------------------------
 # TABS
 # -------------------------
