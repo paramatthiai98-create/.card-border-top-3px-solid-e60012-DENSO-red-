@@ -10,7 +10,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# รีเฟรชทุก 2 วินาที
 st_autorefresh(interval=2000, key="datarefresh")
 
 # -------------------------
@@ -43,7 +42,7 @@ MAX_ALERTS = 20
 # -------------------------
 st.sidebar.title("Demo Control")
 
-demo_mode = st.sidebar.toggle("Demo Mode (Fix Risk from UI)", value=True)
+demo_mode = st.sidebar.toggle("Demo Mode (Fixed Scenario)", value=True)
 
 fixed_risk = {}
 if demo_mode:
@@ -66,7 +65,7 @@ if demo_mode:
         )
 
 # -------------------------
-# SAFETY HELPERS
+# HELPERS
 # -------------------------
 def clamp_risk(value):
     try:
@@ -85,10 +84,38 @@ def safe_append_limited(items, value, max_len):
     if len(items) > max_len:
         del items[:-max_len]
 
+
+def decision_logic(risk):
+    risk = clamp_risk(risk)
+    if risk > 80:
+        return "HIGH RISK", "STOP MACHINE"
+    if risk > 50:
+        return "WARNING", "CHECK SYSTEM"
+    return "SAFE", "NORMAL OPERATION"
+
+
+def render_status_box(status):
+    if status == "SAFE":
+        st.success(status)
+    elif status == "WARNING":
+        st.warning(status)
+    else:
+        st.error(status)
+
+
+def render_live_alert(line_key, status, reasons):
+    if status == "HIGH RISK":
+        st.error(f"🚨 {line_key}: HIGH RISK - {', '.join(reasons)}")
+    elif status == "WARNING":
+        st.warning(f"⚠️ {line_key}: WARNING - {', '.join(reasons)}")
+    else:
+        st.success(f"✅ {line_key}: SAFE - No active critical risk")
+
+
 # -------------------------
-# DATA GENERATION
+# NORMAL RANDOM DATA
 # -------------------------
-def generate_data_by_line(line_key):
+def generate_random_data_by_line(line_key):
     if line_key == "Line 1":
         return {
             "helmet": random.choice([True, False]),
@@ -145,15 +172,6 @@ def calculate_risk_by_line(d, line_key):
     return clamp_risk(risk), reasons
 
 
-def decision_logic(risk):
-    risk = clamp_risk(risk)
-    if risk > 80:
-        return "HIGH RISK", "STOP MACHINE"
-    if risk > 50:
-        return "WARNING", "CHECK SYSTEM"
-    return "SAFE", "NORMAL OPERATION"
-
-
 def ai_solution_by_line(reasons, line_key):
     solutions = []
 
@@ -196,25 +214,66 @@ def ai_solution_by_line(reasons, line_key):
 
     return solutions
 
-# -------------------------
-# RENDER HELPERS
-# -------------------------
-def render_status_box(status):
-    if status == "SAFE":
-        st.success(status)
-    elif status == "WARNING":
-        st.warning(status)
-    else:
-        st.error(status)
 
+# -------------------------
+# DEMO FIXED SCENARIO
+# -------------------------
+def demo_fixed_data_by_risk(risk, line_key):
+    risk = clamp_risk(risk)
 
-def render_live_alert(line_key, status, reasons):
-    if status == "HIGH RISK":
-        st.error(f"🚨 {line_key}: HIGH RISK - {', '.join(reasons) if reasons else 'Risk level overridden by demo mode'}")
-    elif status == "WARNING":
-        st.warning(f"⚠️ {line_key}: WARNING - {', '.join(reasons) if reasons else 'Risk level overridden by demo mode'}")
+    # SAFE
+    if risk <= 50:
+        if line_key == "Line 1":
+            d = {"helmet": True, "distance": 65, "vibration": 22, "temperature": 34}
+            reasons = ["Normal operating condition"]
+        elif line_key == "Line 2":
+            d = {"helmet": True, "distance": 70, "vibration": 18, "temperature": 42}
+            reasons = ["Normal operating condition"]
+        elif line_key == "Line 3":
+            d = {"helmet": True, "distance": 55, "vibration": 35, "temperature": 40}
+            reasons = ["Normal operating condition"]
+        else:
+            d = {"helmet": True, "distance": 60, "vibration": 30, "temperature": 48}
+            reasons = ["Normal operating condition"]
+
+        solutions = ["ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง"]
+        return d, reasons, solutions
+
+    # WARNING
+    if risk <= 80:
+        if line_key == "Line 1":
+            d = {"helmet": False, "distance": 28, "vibration": 45, "temperature": 38}
+            reasons = ["No helmet detected", "Worker too close to machine"]
+        elif line_key == "Line 2":
+            d = {"helmet": True, "distance": 45, "vibration": 25, "temperature": 66}
+            reasons = ["High operating temperature"]
+        elif line_key == "Line 3":
+            d = {"helmet": True, "distance": 25, "vibration": 78, "temperature": 44}
+            reasons = ["Worker too close to machine", "High machine vibration"]
+        else:
+            d = {"helmet": False, "distance": 40, "vibration": 50, "temperature": 67}
+            reasons = ["No helmet detected", "High operating temperature"]
+
+        solutions = ai_solution_by_line(reasons, line_key)
+        return d, reasons, solutions
+
+    # HIGH RISK
+    if line_key == "Line 1":
+        d = {"helmet": False, "distance": 18, "vibration": 55, "temperature": 42}
+        reasons = ["No helmet detected", "Worker too close to machine"]
+    elif line_key == "Line 2":
+        d = {"helmet": False, "distance": 35, "vibration": 30, "temperature": 75}
+        reasons = ["No helmet detected", "High operating temperature"]
+    elif line_key == "Line 3":
+        d = {"helmet": False, "distance": 15, "vibration": 85, "temperature": 49}
+        reasons = ["No helmet detected", "Worker too close to machine", "High machine vibration"]
     else:
-        st.success(f"✅ {line_key}: SAFE - No active critical risk")
+        d = {"helmet": False, "distance": 22, "vibration": 72, "temperature": 78}
+        reasons = ["No helmet detected", "Worker too close to machine", "High machine vibration", "High operating temperature"]
+
+    solutions = ai_solution_by_line(reasons, line_key)
+    return d, reasons, solutions
+
 
 # -------------------------
 # SESSION STATE
@@ -231,25 +290,16 @@ if "line_alerts" not in st.session_state:
 current_line_data = {}
 
 for line_key in LINE_CONFIG.keys():
-    d = generate_data_by_line(line_key)
-    calc_risk, reasons = calculate_risk_by_line(d, line_key)
-
-    # Demo mode: ใช้ค่า risk จาก slider
     if demo_mode:
         risk = clamp_risk(fixed_risk[line_key])
-
-        # ถ้าอยากให้มี reason อธิบายตอน demo แม้ไม่ได้มาจาก calculation จริง
-        if risk <= 50:
-            reasons = reasons if reasons else ["Normal operating condition"]
-        elif risk <= 80:
-            reasons = reasons if reasons else ["Moderate safety concern detected in demo mode"]
-        else:
-            reasons = reasons if reasons else ["Critical safety concern detected in demo mode"]
+        d, reasons, solutions = demo_fixed_data_by_risk(risk, line_key)
     else:
-        risk = calc_risk
+        d = generate_random_data_by_line(line_key)
+        risk, reasons = calculate_risk_by_line(d, line_key)
+        solutions = ai_solution_by_line(reasons, line_key)
 
+    risk = clamp_risk(risk)
     status, action = decision_logic(risk)
-    solutions = ai_solution_by_line(reasons, line_key)
 
     record = {
         "time": datetime.now().strftime("%H:%M:%S"),
@@ -257,7 +307,7 @@ for line_key in LINE_CONFIG.keys():
         "distance": d["distance"],
         "vibration": d["vibration"],
         "temperature": d["temperature"],
-        "risk": clamp_risk(risk),
+        "risk": risk,
         "status": status,
         "action": action,
         "reasons": ", ".join(reasons) if reasons else "No active risk detected",
@@ -286,7 +336,7 @@ for line_key in LINE_CONFIG.keys():
 
     current_line_data[line_key] = {
         "data": d,
-        "risk": clamp_risk(risk),
+        "risk": risk,
         "reasons": reasons,
         "status": status,
         "action": action,
@@ -300,7 +350,7 @@ st.title("SmartSafe Co-Pilot Dashboard")
 st.caption("DENSO-style production safety monitoring across 4 lines")
 
 if demo_mode:
-    st.info("Demo Mode is ON: Risk Score of each line is controlled from the sidebar sliders.")
+    st.info("Demo Mode is ON: Risk, sensor values, reasons, and AI fixes are fixed by scenario.")
 
 # -------------------------
 # OVERVIEW
