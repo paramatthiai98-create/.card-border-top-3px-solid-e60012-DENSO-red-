@@ -231,25 +231,17 @@ if "line_alerts" not in st.session_state:
 current_line_data = {}
 
 for line_key in LINE_CONFIG.keys():
-    d = generate_data_by_line(line_key)
-    calc_risk, reasons = calculate_risk_by_line(d, line_key)
+   d = generate_data_by_line(line_key)
+calc_risk, reasons = calculate_risk_by_line(d, line_key)
 
-    # Demo mode: ใช้ค่า risk จาก slider
-    if demo_mode:
-        risk = clamp_risk(fixed_risk[line_key])
-
-        # ถ้าอยากให้มี reason อธิบายตอน demo แม้ไม่ได้มาจาก calculation จริง
-        if risk <= 50:
-            reasons = reasons if reasons else ["Normal operating condition"]
-        elif risk <= 80:
-            reasons = reasons if reasons else ["Moderate safety concern detected in demo mode"]
-        else:
-            reasons = reasons if reasons else ["Critical safety concern detected in demo mode"]
-    else:
-        risk = calc_risk
-
-    status, action = decision_logic(risk)
+if demo_mode:
+    risk = clamp_risk(fixed_risk[line_key])
+    reasons, solutions = demo_reason_and_solution_by_risk(risk, line_key)
+else:
+    risk = calc_risk
     solutions = ai_solution_by_line(reasons, line_key)
+
+status, action = decision_logic(risk)
 
     record = {
         "time": datetime.now().strftime("%H:%M:%S"),
