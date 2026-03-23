@@ -448,6 +448,8 @@ st.markdown('<div class="sub-title">DENSO-style production safety monitoring acr
 # -------------------------
 # OVERVIEW
 # -------------------------
+st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
+
 cols = st.columns(4)
 
 for i, line in enumerate(LINE_CONFIG):
@@ -474,6 +476,7 @@ for i, line in enumerate(LINE_CONFIG):
             st.warning("WARNING")
         else:
             st.error("HIGH RISK")
+
 # -------------------------
 # TABS
 # -------------------------
