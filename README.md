@@ -1,0 +1,1 @@
+# .card-border-top-3px-solid-e60012-DENSO-red-
