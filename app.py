@@ -35,10 +35,60 @@ LINE_CONFIG = {
     }
 }
 
+MAX_HISTORY = 100
+MAX_ALERTS = 20
+
 # -------------------------
-# HELPERS
+# SIDEBAR DEMO CONTROL
 # -------------------------
-def generate_data_by_line(line_key: str):
+st.sidebar.title("Demo Control")
+
+demo_mode = st.sidebar.toggle("Demo Mode (Fix Risk from UI)", value=True)
+
+fixed_risk = {}
+if demo_mode:
+    st.sidebar.markdown("### Set Risk per Line")
+    for line in LINE_CONFIG.keys():
+        default_value = 30
+        if line == "Line 2":
+            default_value = 0
+        elif line == "Line 3":
+            default_value = 50
+        elif line == "Line 4":
+            default_value = 75
+
+        fixed_risk[line] = st.sidebar.slider(
+            f"{line} Risk",
+            min_value=0,
+            max_value=100,
+            value=default_value,
+            step=1
+        )
+
+# -------------------------
+# SAFETY HELPERS
+# -------------------------
+def clamp_risk(value):
+    try:
+        value = int(round(float(value)))
+    except Exception:
+        return 0
+    return max(0, min(value, 100))
+
+
+def progress_value_from_risk(risk):
+    return clamp_risk(risk) / 100.0
+
+
+def safe_append_limited(items, value, max_len):
+    items.append(value)
+    if len(items) > max_len:
+        del items[:-max_len]
+
+# -------------------------
+# DATA GENERATION
+# -------------------------
+def generate_data_by_line(line_key):
     if line_key == "Line 1":
         return {
             "helmet": random.choice([True, False]),
@@ -68,7 +118,7 @@ def generate_data_by_line(line_key: str):
     }
 
 
-def calculate_risk_by_line(d: dict, line_key: str):
+def calculate_risk_by_line(d, line_key):
     risk = 0
     reasons = []
 
@@ -92,10 +142,11 @@ def calculate_risk_by_line(d: dict, line_key: str):
             risk += 20
             reasons.append("High operating temperature")
 
-    return min(risk, 100), reasons
+    return clamp_risk(risk), reasons
 
 
-def decision_logic(risk: int):
+def decision_logic(risk):
+    risk = clamp_risk(risk)
     if risk > 80:
         return "HIGH RISK", "STOP MACHINE"
     if risk > 50:
@@ -103,7 +154,7 @@ def decision_logic(risk: int):
     return "SAFE", "NORMAL OPERATION"
 
 
-def ai_solution_by_line(reasons: list[str], line_key: str):
+def ai_solution_by_line(reasons, line_key):
     solutions = []
 
     if "No helmet detected" in reasons:
@@ -145,8 +196,10 @@ def ai_solution_by_line(reasons: list[str], line_key: str):
 
     return solutions
 
-
-def render_status(status: str):
+# -------------------------
+# RENDER HELPERS
+# -------------------------
+def render_status_box(status):
     if status == "SAFE":
         st.success(status)
     elif status == "WARNING":
@@ -155,14 +208,13 @@ def render_status(status: str):
         st.error(status)
 
 
-def render_live_alert(line_key: str, status: str, reasons: list[str]):
+def render_live_alert(line_key, status, reasons):
     if status == "HIGH RISK":
-        st.error(f"🚨 {line_key}: HIGH RISK - {', '.join(reasons)}")
+        st.error(f"🚨 {line_key}: HIGH RISK - {', '.join(reasons) if reasons else 'Risk level overridden by demo mode'}")
     elif status == "WARNING":
-        st.warning(f"⚠️ {line_key}: WARNING - {', '.join(reasons)}")
+        st.warning(f"⚠️ {line_key}: WARNING - {', '.join(reasons) if reasons else 'Risk level overridden by demo mode'}")
     else:
         st.success(f"✅ {line_key}: SAFE - No active critical risk")
-
 
 # -------------------------
 # SESSION STATE
@@ -180,7 +232,22 @@ current_line_data = {}
 
 for line_key in LINE_CONFIG.keys():
     d = generate_data_by_line(line_key)
-    risk, reasons = calculate_risk_by_line(d, line_key)
+    calc_risk, reasons = calculate_risk_by_line(d, line_key)
+
+    # Demo mode: ใช้ค่า risk จาก slider
+    if demo_mode:
+        risk = clamp_risk(fixed_risk[line_key])
+
+        # ถ้าอยากให้มี reason อธิบายตอน demo แม้ไม่ได้มาจาก calculation จริง
+        if risk <= 50:
+            reasons = reasons if reasons else ["Normal operating condition"]
+        elif risk <= 80:
+            reasons = reasons if reasons else ["Moderate safety concern detected in demo mode"]
+        else:
+            reasons = reasons if reasons else ["Critical safety concern detected in demo mode"]
+    else:
+        risk = calc_risk
+
     status, action = decision_logic(risk)
     solutions = ai_solution_by_line(reasons, line_key)
 
@@ -190,16 +257,14 @@ for line_key in LINE_CONFIG.keys():
         "distance": d["distance"],
         "vibration": d["vibration"],
         "temperature": d["temperature"],
-        "risk": risk,
+        "risk": clamp_risk(risk),
         "status": status,
         "action": action,
         "reasons": ", ".join(reasons) if reasons else "No active risk detected",
         "solutions": " | ".join(solutions)
     }
 
-    st.session_state.line_history[line_key].append(record)
-    if len(st.session_state.line_history[line_key]) > 100:
-        st.session_state.line_history[line_key] = st.session_state.line_history[line_key][-100:]
+    safe_append_limited(st.session_state.line_history[line_key], record, MAX_HISTORY)
 
     if status in ["WARNING", "HIGH RISK"]:
         new_alert = {
@@ -211,19 +276,17 @@ for line_key in LINE_CONFIG.keys():
         }
 
         alert_history = st.session_state.line_alerts[line_key]
-        if (
+        should_append = (
             len(alert_history) == 0
             or alert_history[-1]["reasons"] != new_alert["reasons"]
             or alert_history[-1]["status"] != new_alert["status"]
-        ):
-            alert_history.append(new_alert)
-
-    if len(st.session_state.line_alerts[line_key]) > 20:
-        st.session_state.line_alerts[line_key] = st.session_state.line_alerts[line_key][-20:]
+        )
+        if should_append:
+            safe_append_limited(alert_history, new_alert, MAX_ALERTS)
 
     current_line_data[line_key] = {
         "data": d,
-        "risk": risk,
+        "risk": clamp_risk(risk),
         "reasons": reasons,
         "status": status,
         "action": action,
@@ -235,6 +298,9 @@ for line_key in LINE_CONFIG.keys():
 # -------------------------
 st.title("SmartSafe Co-Pilot Dashboard")
 st.caption("DENSO-style production safety monitoring across 4 lines")
+
+if demo_mode:
+    st.info("Demo Mode is ON: Risk Score of each line is controlled from the sidebar sliders.")
 
 # -------------------------
 # OVERVIEW
@@ -250,20 +316,20 @@ for i, line_key in enumerate(LINE_CONFIG.keys()):
         d = line_now["data"]
 
         with st.container(border=True):
-            c1, c2 = st.columns([2, 1])
-            with c1:
+            left, right = st.columns([2, 1])
+            with left:
                 st.markdown(f"**{line_key}**")
                 st.write(line_info["name"])
-            with c2:
+            with right:
                 st.metric("Risk", line_now["risk"])
 
             st.caption(line_info["description"])
 
-            f1, f2 = st.columns(2)
-            f1.write(f"Helmet: {'YES' if d['helmet'] else 'NO'}")
-            f2.write(f"Temp: {d['temperature']} °C")
+            c1, c2 = st.columns(2)
+            c1.write(f"Helmet: {'YES' if d['helmet'] else 'NO'}")
+            c2.write(f"Temp: {d['temperature']} °C")
 
-            render_status(line_now["status"])
+            render_status_box(line_now["status"])
 
 # -------------------------
 # TABS
@@ -296,7 +362,7 @@ with tabs[0]:
     st.subheader("Risk Comparison")
     risk_compare = pd.DataFrame({
         "Line": list(LINE_CONFIG.keys()),
-        "Risk Score": [current_line_data[line]["risk"] for line in LINE_CONFIG.keys()]
+        "Risk Score": [clamp_risk(current_line_data[line]["risk"]) for line in LINE_CONFIG.keys()]
     }).set_index("Line")
     st.line_chart(risk_compare, use_container_width=True)
 
@@ -305,7 +371,7 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
         line_info = LINE_CONFIG[line_key]
         line_now = current_line_data[line_key]
         d = line_now["data"]
-        risk = line_now["risk"]
+        risk = clamp_risk(line_now["risk"])
         reasons = line_now["reasons"]
         status = line_now["status"]
         action = line_now["action"]
@@ -332,8 +398,8 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
             with st.container(border=True):
                 st.markdown("### Risk Analysis")
                 st.metric("Risk Score", risk)
-                render_status(status)
-                st.progress(risk / 100)
+                render_status_box(status)
+                st.progress(progress_value_from_risk(risk))
 
         st.subheader("Live Alert")
         render_live_alert(line_key, status, reasons)
@@ -361,15 +427,21 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
         with st.container(border=True):
             st.markdown("### Risk Trend")
             df = pd.DataFrame(st.session_state.line_history[line_key])
-            st.line_chart(df[["risk"]], use_container_width=True)
+
+            if "risk" in df.columns and not df.empty:
+                df["risk"] = df["risk"].apply(clamp_risk)
+                st.line_chart(df[["risk"]], use_container_width=True)
+            else:
+                st.info("ยังไม่มีข้อมูลกราฟ")
 
         with st.container(border=True):
             st.markdown("### Recent Alerts")
             if st.session_state.line_alerts[line_key]:
                 for alert in reversed(st.session_state.line_alerts[line_key][-5:]):
+                    safe_risk = clamp_risk(alert["risk"])
                     msg = (
                         f"[{alert['time']}] {alert['status']} | "
-                        f"Score {alert['risk']} | {alert['reasons']} | "
+                        f"Score {safe_risk} | {alert['reasons']} | "
                         f"Action: {alert['action']}"
                     )
                     if alert["status"] == "HIGH RISK":
