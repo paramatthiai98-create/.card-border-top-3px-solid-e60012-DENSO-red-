@@ -442,36 +442,13 @@ for line_key in LINE_CONFIG.keys():
 # -------------------------
 # HEADER
 # -------------------------
-st.markdown(f"""
-<div class="overview-box">
-    
-    <div class="overview-top">
-        <div>
-            <div class="overview-line">{line_key}</div>
-            <div class="overview-process">{line_info['name']}</div>
-        </div>
-        <div class="overview-risk-wrap">
-            <div class="overview-risk-label">Risk</div>
-            <div class="overview-risk-value">{line_now['risk']}</div>
-        </div>
-    </div>
+st.markdown('<div class="main-title">SmartSafe Co-Pilot Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">DENSO-style production safety monitoring across 4 lines</div>', unsafe_allow_html=True)
 
-    <div class="overview-desc">
-        {line_info['description']}
-    </div>
-
-    <div class="overview-footer">
-        <div class="overview-mini">
-            Helmet: <b>{"YES" if d["helmet"] else "NO"}</b><br>
-            Temp: <b>{d["temperature"]} °C</b>
-        </div>
-        <div>
-            {render_status_chip(line_now["status"])}
-        </div>
-    </div>
-
-</div>
-""", unsafe_allow_html=True)
+# -------------------------
+# OVERVIEW
+# -------------------------
+st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
 
 overview_cols = st.columns(4, gap="medium")
 
