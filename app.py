@@ -451,7 +451,6 @@ st.markdown('<div class="sub-title">DENSO-style production safety monitoring acr
 st.markdown('<div class="section-title">Overview</div>', unsafe_allow_html=True)
 
 cols = st.columns(4)
-
 for i, line_key in enumerate(LINE_CONFIG.keys()):
     with cols[i]:
         line_info = LINE_CONFIG[line_key]
