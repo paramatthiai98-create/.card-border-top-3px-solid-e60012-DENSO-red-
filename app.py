@@ -458,7 +458,7 @@ for i, line_key in enumerate(LINE_CONFIG.keys()):
         line_now = current_line_data[line_key]
         d = line_now["data"]
 
-        st.markdown(f"""
+        overview_html = f"""
         <div class="overview-box">
             <div class="overview-top">
                 <div>
@@ -471,17 +471,22 @@ for i, line_key in enumerate(LINE_CONFIG.keys()):
                 </div>
             </div>
 
-            <div class="overview-desc">{line_info['description']}</div>
+            <div class="overview-desc">
+                {line_info['description']}
+            </div>
 
             <div class="overview-footer">
                 <div class="overview-mini">
                     Helmet: <b>{"YES" if d["helmet"] else "NO"}</b><br>
                     Temp: <b>{d["temperature"]} °C</b>
                 </div>
-                <div>{render_status_chip(line_now["status"])}</div>
+                <div>
+                    {render_status_chip(line_now["status"])}
+                </div>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        st.markdown(overview_html, unsafe_allow_html=True)
 
 # -------------------------
 # TABS
