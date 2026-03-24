@@ -675,6 +675,9 @@ with tabs[5]:
             if not df_hm.empty:
                 dow_labels = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"]
                 df_hm["dow_label"] = df_hm["dow"].map(lambda x: dow_labels[int(x)])
+
+# ✅ แก้แล้ว — guard None และ NaN
+lambda x: dow_labels[int(x)] if x is not None and str(x) != "nan" else "?"
                 pivot_hm = (
                     df_hm.pivot_table(index="hour", columns="dow_label", values="avg_risk")
                     .reindex(columns=dow_labels)
