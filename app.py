@@ -178,82 +178,6 @@ def cutoff_datetime(days):
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
-def fmt_pct(v):
-    return f"{v:.1f}%"
-
-# =========================================================
-# ANALYTICS HELPERS
-# =========================================================
-def count_status_incidents(df: pd.DataFrame, target_status: str) -> int:
-    if df.empty:
-        return 0
-
-    work = df.sort_values(["line_key", "created_at"]).copy()
-    work["prev_status"] = work.groupby("line_key")["status"].shift(1)
-
-    incidents = work[
-        (work["status"] == target_status) &
-        (work["prev_status"] != target_status)
-    ]
-    return len(incidents)
-
-def count_status_records(df: pd.DataFrame, target_status: str) -> int:
-    if df.empty:
-        return 0
-    return int((df["status"] == target_status).sum())
-
-def calc_status_rate(df: pd.DataFrame, target_status: str) -> float:
-    if df.empty:
-        return 0.0
-    return round(count_status_records(df, target_status) / len(df) * 100, 1)
-
-def get_most_risky_line(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "-"
-    line_df = (
-        df.groupby("line_key", as_index=False)
-        .agg(avg_risk=("risk", "mean"))
-        .sort_values("avg_risk", ascending=False)
-    )
-    if line_df.empty:
-        return "-"
-    top = line_df.iloc[0]
-    return f"{top['line_key']} ({top['avg_risk']:.1f})"
-
-def get_peak_hour(df: pd.DataFrame) -> str:
-    if df.empty:
-        return "-"
-    work = df.copy()
-    work["hour"] = work["created_at"].dt.hour
-    hour_df = (
-        work.groupby("hour", as_index=False)
-        .agg(avg_risk=("risk", "mean"))
-        .sort_values("avg_risk", ascending=False)
-    )
-    if hour_df.empty:
-        return "-"
-    top = hour_df.iloc[0]
-    return f"{int(top['hour']):02d}:00"
-
-def build_incident_table(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=[
-            "Line", "Warning Incidents", "High Risk Incidents",
-            "Warning Records", "High Risk Records"
-        ])
-
-    rows = []
-    for line_key in sorted(df["line_key"].unique()):
-        line_df = df[df["line_key"] == line_key].copy()
-        rows.append({
-            "Line": line_key,
-            "Warning Incidents": count_status_incidents(line_df, "WARNING"),
-            "High Risk Incidents": count_status_incidents(line_df, "HIGH RISK"),
-            "Warning Records": count_status_records(line_df, "WARNING"),
-            "High Risk Records": count_status_records(line_df, "HIGH RISK"),
-        })
-    return pd.DataFrame(rows)
-
 # =========================================================
 # DATA GENERATION
 # =========================================================
@@ -359,14 +283,14 @@ def ai_pattern_recommendation(df_line: pd.DataFrame, line_key: str):
         return "No sufficient historical data."
 
     msg = []
-    high_incidents = count_status_incidents(df_line, "HIGH RISK")
-    warning_incidents = count_status_incidents(df_line, "WARNING")
+    high_count = int((df_line["status"] == "HIGH RISK").sum())
+    warning_count = int((df_line["status"] == "WARNING").sum())
     avg_risk = float(df_line["risk"].mean())
 
-    if high_incidents >= 10:
-        msg.append("Repeated HIGH RISK incidents detected. Perform root cause analysis and assign ownership.")
-    if warning_incidents >= 20:
-        msg.append("High WARNING incident accumulation detected. Start preventive review by shift.")
+    if high_count >= 10:
+        msg.append("Repeated HIGH RISK detected. Perform root cause analysis and assign ownership.")
+    if warning_count >= 20:
+        msg.append("High WARNING accumulation detected. Start preventive review by shift.")
     if avg_risk >= 60:
         msg.append("Average risk is relatively high. Increase inspection frequency.")
 
@@ -847,3 +771,273 @@ with tabs[0]:
         })
 
     summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+    st.subheader("Risk Comparison")
+    risk_compare = pd.DataFrame({
+        "Line": list(LINE_CONFIG.keys()),
+        "Risk Score": [clamp_risk(current_line_data[line]["risk"]) for line in LINE_CONFIG.keys()]
+    }).set_index("Line")
+    st.line_chart(risk_compare, use_container_width=True)
+
+# =========================================================
+# LINE TABS
+# =========================================================
+for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
+    with tabs[idx]:
+        line_info = LINE_CONFIG[line_key]
+        line_now = current_line_data[line_key]
+        d = line_now["data"]
+        risk = clamp_risk(line_now["risk"])
+        reasons = line_now["reasons"]
+        status = line_now["status"]
+        action = line_now["action"]
+        solutions = line_now["solutions"]
+
+        st.subheader(f"{line_key} - {line_info['name']}")
+        st.caption(line_info["description"])
+
+        col1, col2, col3 = st.columns(3, gap="large")
+
+        with col1:
+            with st.container(border=True):
+                st.markdown("### Worker Status")
+                st.metric("Helmet", "YES" if d["helmet"] else "NO")
+                st.metric("Distance", f"{d['distance']} cm")
+
+        with col2:
+            with st.container(border=True):
+                st.markdown("### Machine Status")
+                st.metric("Vibration", d["vibration"])
+                st.metric("Temperature", f"{d['temperature']} °C")
+
+        with col3:
+            with st.container(border=True):
+                st.markdown("### Risk Analysis")
+                st.metric("Risk Score", risk)
+                render_status_box(status)
+                st.progress(progress_value_from_risk(risk))
+
+        st.subheader("Live Alert")
+        render_live_alert(line_key, status, reasons)
+
+        left, right = st.columns([1, 1.15], gap="large")
+
+        with left:
+            with st.container(border=True):
+                st.markdown("### AI Decision Support")
+                st.write(f"Recommended Action: **{action}**")
+
+                st.markdown("### Explainable AI")
+                if reasons:
+                    for r in reasons:
+                        st.write(f"- {r}")
+                else:
+                    st.write("- No active risk detected")
+
+        with right:
+            with st.container(border=True):
+                st.markdown("### AI Recommended Fix")
+                for s in solutions:
+                    st.info(s)
+
+        with st.container(border=True):
+            st.markdown("### Session Risk Trend")
+            df = pd.DataFrame(st.session_state.line_history[line_key])
+
+            if "risk" in df.columns and not df.empty:
+                df["risk"] = df["risk"].apply(clamp_risk)
+                st.line_chart(df[["risk"]], use_container_width=True)
+            else:
+                st.info("No session chart data yet.")
+
+        with st.container(border=True):
+            st.markdown(f"### Historical Trend ({history_range_label})")
+            line_hist_df = hist_df[hist_df["line_key"] == line_key].copy() if not hist_df.empty else pd.DataFrame()
+
+            if not line_hist_df.empty:
+                trend_line = (
+                    line_hist_df
+                    .assign(created_date_only=line_hist_df["created_at"].dt.date)
+                    .groupby("created_date_only", as_index=False)
+                    .agg(
+                        avg_risk=("risk", "mean"),
+                        max_risk=("risk", "max")
+                    )
+                    .set_index("created_date_only")
+                )
+                st.line_chart(trend_line[["avg_risk", "max_risk"]], use_container_width=True)
+            else:
+                st.info("No historical chart data in the selected range.")
+
+        with st.container(border=True):
+            st.markdown("### Recent Alerts")
+            if demo_mode and demo_history_mode == "Sync with Demo Risk":
+                line_alert_demo = line_hist_df[line_hist_df["status"].isin(["WARNING", "HIGH RISK"])].copy()
+                line_alert_demo = line_alert_demo.sort_values("created_at", ascending=False).head(5)
+
+                if not line_alert_demo.empty:
+                    for _, alert in line_alert_demo.iterrows():
+                        safe_risk = clamp_risk(alert["risk"])
+                        msg = (
+                            f"[{alert['created_at'].strftime('%Y-%m-%d %H:%M:%S')}] "
+                            f"{alert['status']} | Score {safe_risk} | "
+                            f"{alert['reasons']} | Action: {alert['action']}"
+                        )
+                        if alert["status"] == "HIGH RISK":
+                            st.error(msg)
+                        else:
+                            st.warning(msg)
+                else:
+                    st.info("No alert history in selected demo range.")
+            else:
+                recent_alerts_df = read_recent_alerts(line_key, limit=5)
+                if not recent_alerts_df.empty:
+                    for _, alert in recent_alerts_df.iterrows():
+                        safe_risk = clamp_risk(alert["risk"])
+                        msg = (
+                            f"[{alert['created_at']}] {alert['status']} | "
+                            f"Score {safe_risk} | {alert['reasons']} | "
+                            f"Action: {alert['action']}"
+                        )
+                        if alert["status"] == "HIGH RISK":
+                            st.error(msg)
+                        else:
+                            st.warning(msg)
+                else:
+                    st.info("No alert history yet.")
+
+# =========================================================
+# HISTORICAL ANALYTICS TAB
+# =========================================================
+with tabs[-1]:
+    st.subheader("Historical Analytics")
+    st.caption(f"Selected Range: {history_range_label} | Line: {selected_history_line} | Source: {historical_source_label}")
+
+    if hist_df.empty:
+        st.warning("No historical data found in the selected range.")
+    else:
+        top1, top2, top3, top4 = st.columns(4)
+        top1.metric("Rows", f"{len(hist_df):,}")
+        top2.metric("Avg Risk", f"{hist_df['risk'].mean():.1f}")
+        top3.metric("HIGH RISK", int((hist_df['status'] == "HIGH RISK").sum()))
+        top4.metric("WARNING", int((hist_df['status'] == "WARNING").sum()))
+
+        st.markdown("### Historical Trend")
+        trend_df = (
+            hist_df
+            .assign(created_date_only=hist_df["created_at"].dt.date)
+            .groupby(["created_date_only", "line_key"], as_index=False)
+            .agg(
+                avg_risk=("risk", "mean"),
+                max_risk=("risk", "max"),
+                alerts=("status", lambda s: int((s.isin(["WARNING", "HIGH RISK"])).sum()))
+            )
+        )
+
+        if selected_history_line == "All Lines":
+            pivot_avg = trend_df.pivot(index="created_date_only", columns="line_key", values="avg_risk")
+            st.line_chart(pivot_avg, use_container_width=True)
+        else:
+            one_line = trend_df[trend_df["line_key"] == selected_history_line].set_index("created_date_only")
+            st.line_chart(one_line[["avg_risk", "max_risk"]], use_container_width=True)
+
+        a1, a2 = st.columns(2)
+
+        with a1:
+            st.markdown("### Risk by Line")
+            risk_line_df = (
+                hist_df.groupby("line_key", as_index=False)
+                .agg(
+                    avg_risk=("risk", "mean"),
+                    max_risk=("risk", "max"),
+                    records=("risk", "count")
+                )
+                .sort_values("avg_risk", ascending=False)
+                .set_index("line_key")
+            )
+            st.bar_chart(risk_line_df[["avg_risk", "max_risk"]], use_container_width=True)
+
+        with a2:
+            st.markdown("### Alert Distribution")
+            alert_dist_df = (
+                hist_df[hist_df["status"].isin(["WARNING", "HIGH RISK"])]
+                .groupby(["line_key", "status"], as_index=False)
+                .size()
+            )
+            if not alert_dist_df.empty:
+                alert_pivot = alert_dist_df.pivot(index="line_key", columns="status", values="size").fillna(0)
+                st.bar_chart(alert_pivot, use_container_width=True)
+            else:
+                st.info("No WARNING/HIGH RISK records in the selected range.")
+
+        b1, b2 = st.columns(2)
+
+        with b1:
+            st.markdown("### Top Reasons")
+            reason_series = (
+                hist_df["reasons"]
+                .str.split(", ")
+                .explode()
+                .dropna()
+            )
+            reason_df = reason_series.value_counts().reset_index()
+            reason_df.columns = ["Reason", "Count"]
+            st.dataframe(reason_df.head(10), use_container_width=True, hide_index=True)
+
+        with b2:
+            st.markdown("### Hourly Hotspot")
+            hourly_df = hist_df.copy()
+            hourly_df["hour"] = hourly_df["created_at"].dt.hour
+            hourly_summary = (
+                hourly_df.groupby("hour", as_index=False)
+                .agg(
+                    avg_risk=("risk", "mean"),
+                    alerts=("status", lambda s: int((s.isin(["WARNING", "HIGH RISK"])).sum()))
+                )
+                .set_index("hour")
+            )
+            st.line_chart(hourly_summary, use_container_width=True)
+
+        st.markdown("### Safety Score by Line")
+        safety_df = hist_df.groupby("line_key", as_index=False).agg(
+            avg_risk=("risk", "mean"),
+            helmet_yes_rate=("helmet", lambda s: round((s == "YES").mean() * 100, 2)),
+            high_risk_count=("status", lambda s: int((s == "HIGH RISK").sum())),
+            warning_count=("status", lambda s: int((s == "WARNING").sum()))
+        )
+        safety_df["safety_score"] = (
+            100
+            - safety_df["avg_risk"]
+            - (safety_df["high_risk_count"] * 0.5)
+            - (safety_df["warning_count"] * 0.2)
+            + (safety_df["helmet_yes_rate"] * 0.1)
+        ).clip(lower=0, upper=100).round(1)
+
+        st.dataframe(
+            safety_df.sort_values("safety_score", ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("### Pattern-based AI Insight")
+        insight_lines = []
+        for lk in hist_df["line_key"].unique():
+            df_line = hist_df[hist_df["line_key"] == lk].copy()
+            insight_lines.append(ai_pattern_recommendation(df_line, lk))
+        for msg in insight_lines:
+            st.info(msg)
+
+        st.markdown("### Raw Historical Data")
+        display_df = hist_df.copy()
+        if not display_df.empty:
+            display_df["created_at"] = display_df["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        csv_data = to_csv_bytes(display_df)
+        st.download_button(
+            "Download Historical CSV",
+            data=csv_data,
+            file_name=f"smartsafe_history_{selected_history_line.replace(' ', '_').lower()}_{history_days}d.csv",
+            mime="text/csv"
+        )
