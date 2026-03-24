@@ -47,7 +47,7 @@ MAX_SESSION_HISTORY = 100
 MAX_SESSION_ALERTS = 20
 DB_PATH = Path("smartsafe_history.db")
 
-RANGE_OPTIONS =RANGE_OPTIONS = {
+RANGE_OPTIONS = {
     "7 Days": 7,
     "30 Days": 30,
     "4 Months": 120,
@@ -240,47 +240,47 @@ def ai_solution_by_line(reasons, line_key):
     solutions = []
 
     if "No helmet detected" in reasons:
-        solutions.append("ให้พนักงานสวมหมวกนิรภัยก่อนเข้าพื้นที่ปฏิบัติงาน")
+        solutions.append("Ensure the worker wears a helmet before entering the work area.")
         if line_key == "Line 1":
-            solutions.append("เพิ่มจุดตรวจ PPE ก่อนเข้าพื้นที่ประกอบเซนเซอร์")
+            solutions.append("Add a PPE checkpoint before the sensor assembly area.")
         elif line_key == "Line 4":
-            solutions.append("เพิ่มมาตรการ PPE เข้มงวดในพื้นที่ EV / High Voltage")
+            solutions.append("Apply stricter PPE control in the EV / High Voltage area.")
         else:
-            solutions.append("ติดตั้งระบบตรวจจับ PPE อัตโนมัติ")
+            solutions.append("Install an automatic PPE detection system.")
 
     if "Worker too close to machine" in reasons:
         if line_key == "Line 3":
-            solutions.append("เพิ่มระยะปลอดภัยจากเครื่องจักรความเร็วสูงในไลน์หัวฉีด")
+            solutions.append("Increase the safe distance from the high-speed injector machine.")
         else:
-            solutions.append("เพิ่มระยะปลอดภัยระหว่างคนงานกับเครื่องจักร")
-        solutions.append("กำหนดเขต safe zone ให้ชัดเจน")
+            solutions.append("Increase the safe distance between worker and machine.")
+        solutions.append("Clearly define and mark the safe zone.")
 
     if "High machine vibration" in reasons:
         if line_key == "Line 3":
-            solutions.append("ตรวจสอบเครื่องจักร precision machining และ fixture ทันที")
+            solutions.append("Inspect the precision machining unit and fixture immediately.")
         else:
-            solutions.append("ตรวจสอบการสั่นสะเทือนของเครื่องจักรทันที")
-        solutions.append("หยุดเครื่องเพื่อตรวจเช็กความผิดปกติ")
-        solutions.append("วางแผนบำรุงรักษาเชิงป้องกัน")
+            solutions.append("Inspect abnormal machine vibration immediately.")
+        solutions.append("Stop the machine for inspection.")
+        solutions.append("Schedule preventive maintenance.")
 
     if "High operating temperature" in reasons:
         if line_key == "Line 2":
-            solutions.append("ตรวจสอบระบบระบายความร้อนใน ECU/PCB line")
-            solutions.append("ควบคุมอุณหภูมิพื้นที่ผลิตอิเล็กทรอนิกส์")
+            solutions.append("Inspect the cooling system in the ECU/PCB line.")
+            solutions.append("Control ambient temperature in the electronics production area.")
         elif line_key == "Line 4":
-            solutions.append("ตรวจสอบอุณหภูมิในพื้นที่ EV Components ทันที")
-            solutions.append("แยกพื้นที่ความร้อนสูงและเพิ่มระบบระบายอากาศ")
+            solutions.append("Inspect high temperature in the EV Components area immediately.")
+            solutions.append("Separate high-heat zones and improve ventilation.")
         else:
-            solutions.append("ตรวจสอบอุณหภูมิการทำงานของอุปกรณ์")
+            solutions.append("Inspect equipment operating temperature.")
 
     if not solutions:
-        solutions.append("ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง")
+        solutions.append("System is within normal condition. Continue monitoring.")
 
     return solutions
 
 def ai_pattern_recommendation(df_line: pd.DataFrame, line_key: str):
     if df_line.empty:
-        return "ยังไม่มีข้อมูลย้อนหลังเพียงพอ"
+        return "No sufficient historical data."
 
     msg = []
     high_count = int((df_line["status"] == "HIGH RISK").sum())
@@ -288,24 +288,24 @@ def ai_pattern_recommendation(df_line: pd.DataFrame, line_key: str):
     avg_risk = float(df_line["risk"].mean())
 
     if high_count >= 10:
-        msg.append("พบ HIGH RISK ซ้ำหลายครั้ง ควรทำ root cause analysis และกำหนด owner รายไลน์")
+        msg.append("Repeated HIGH RISK detected. Perform root cause analysis and assign ownership.")
     if warning_count >= 20:
-        msg.append("พบ WARNING สะสมจำนวนมาก ควรเปิด preventive review รายกะ")
+        msg.append("High WARNING accumulation detected. Start preventive review by shift.")
     if avg_risk >= 60:
-        msg.append("ค่าเฉลี่ยความเสี่ยงค่อนข้างสูง ควรเพิ่ม inspection frequency")
+        msg.append("Average risk is relatively high. Increase inspection frequency.")
 
     helmet_no_rate = (df_line["helmet"] == "NO").mean() if len(df_line) else 0
     if helmet_no_rate >= 0.25:
-        msg.append("พบอัตราไม่สวม PPE สูง ควรเพิ่ม PPE checkpoint ก่อนเข้าไลน์")
+        msg.append("High non-PPE rate detected. Add a PPE checkpoint before entry.")
 
     if (df_line["vibration"] > 70).mean() >= 0.20:
-        msg.append("พบ vibration สูงซ้ำ ควรวางแผน preventive maintenance")
+        msg.append("Repeated high vibration detected. Schedule preventive maintenance.")
 
     if (df_line["temperature"] > 60).mean() >= 0.20:
-        msg.append("พบอุณหภูมิสูงซ้ำ ควรตรวจสอบระบบระบายความร้อนและ ventilation")
+        msg.append("Repeated high temperature detected. Check cooling and ventilation systems.")
 
     if not msg:
-        return f"{line_key}: แนวโน้มย้อนหลังยังอยู่ในเกณฑ์ควบคุมได้ ให้ติดตามต่อเนื่อง"
+        return f"{line_key}: Historical trend remains controllable. Continue monitoring."
 
     return f"{line_key}: " + " | ".join(msg[:3])
 
@@ -329,7 +329,7 @@ def demo_fixed_data_by_risk(risk, line_key):
             d = {"helmet": True, "distance": 60, "vibration": 30, "temperature": 48}
             reasons = ["Normal operating condition"]
 
-        solutions = ["ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง"]
+        solutions = ["System is within normal condition. Continue monitoring."]
         return d, reasons, solutions
 
     if risk <= 80:
@@ -364,6 +364,66 @@ def demo_fixed_data_by_risk(risk, line_key):
 
     solutions = ai_solution_by_line(reasons, line_key)
     return d, reasons, solutions
+
+def get_demo_step_hours(days: int) -> int:
+    if days <= 7:
+        return 2
+    if days <= 30:
+        return 6
+    if days <= 120:
+        return 12
+    return 24
+
+def generate_demo_historical_df(days: int, fixed_risk_map: dict, selected_line: str = "All Lines"):
+    rows = []
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=days)
+    step_hours = get_demo_step_hours(days)
+
+    for line_key in LINE_CONFIG.keys():
+        if selected_line != "All Lines" and line_key != selected_line:
+            continue
+
+        base_risk = clamp_risk(fixed_risk_map.get(line_key, 30))
+        current = start_time
+
+        while current <= end_time:
+            if line_key == "Line 3":
+                simulated_risk = clamp_risk(base_risk + random.randint(-12, 12))
+            elif line_key == "Line 4":
+                simulated_risk = clamp_risk(base_risk + random.randint(-10, 10))
+            else:
+                simulated_risk = clamp_risk(base_risk + random.randint(-6, 6))
+
+            d, reasons, solutions = demo_fixed_data_by_risk(simulated_risk, line_key)
+            status, action = decision_logic(simulated_risk)
+
+            rows.append({
+                "id": None,
+                "created_at": current,
+                "created_date": current.strftime("%Y-%m-%d"),
+                "created_hour": current.strftime("%H:00"),
+                "line_key": line_key,
+                "process_name": LINE_CONFIG[line_key]["name"],
+                "helmet": "YES" if d["helmet"] else "NO",
+                "distance": d["distance"],
+                "vibration": d["vibration"],
+                "temperature": d["temperature"],
+                "risk": simulated_risk,
+                "status": status,
+                "action": action,
+                "reasons": ", ".join(reasons) if reasons else "No active risk detected",
+                "solutions": " | ".join(solutions),
+                "is_demo": 1
+            })
+
+            current += timedelta(hours=step_hours)
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["created_at"] = pd.to_datetime(df["created_at"])
+        df["risk"] = df["risk"].apply(clamp_risk)
+    return df
 
 # =========================================================
 # DB WRITE / READ
@@ -510,7 +570,7 @@ st.sidebar.markdown("---")
 history_range_label = st.sidebar.selectbox(
     "Historical Range",
     list(RANGE_OPTIONS.keys()),
-    index=2
+    index=0
 )
 history_days = RANGE_OPTIONS[history_range_label]
 
@@ -519,6 +579,14 @@ selected_history_line = st.sidebar.selectbox(
     ["All Lines"] + list(LINE_CONFIG.keys()),
     index=0
 )
+
+demo_history_mode = "Use Real Database"
+if demo_mode:
+    demo_history_mode = st.sidebar.selectbox(
+        "Demo Historical Mode",
+        ["Use Real Database", "Sync with Demo Risk"],
+        index=1
+    )
 
 st.sidebar.markdown("---")
 retention_days = st.sidebar.selectbox(
@@ -529,7 +597,7 @@ retention_days = st.sidebar.selectbox(
 
 if st.sidebar.button("Clean Old Data"):
     deleted_rows = delete_older_than(retention_days)
-    st.sidebar.success(f"ลบข้อมูลเก่าแล้ว {deleted_rows} รายการ")
+    st.sidebar.success(f"Deleted {deleted_rows} old rows")
 
 # =========================================================
 # GENERATE CURRENT DATA + SAVE TO DB
@@ -614,20 +682,37 @@ for line_key in LINE_CONFIG.keys():
     }
 
 # =========================================================
+# HISTORICAL LOAD
+# =========================================================
+if demo_mode and demo_history_mode == "Sync with Demo Risk":
+    hist_df = generate_demo_historical_df(history_days, fixed_risk, selected_history_line)
+    historical_source_label = "Demo-Synced Historical Data"
+else:
+    hist_df = read_history(history_days, selected_history_line)
+    historical_source_label = "SQLite Historical Data"
+
+if not hist_df.empty:
+    hist_df["created_at"] = pd.to_datetime(hist_df["created_at"])
+    hist_df["risk"] = hist_df["risk"].apply(clamp_risk)
+
+# =========================================================
 # HEADER
 # =========================================================
 st.title("SmartSafe Co-Pilot Dashboard")
 st.caption("DENSO-style production safety monitoring across 4 lines with SQLite historical storage")
 
 if demo_mode:
-    st.info("Demo Mode is ON: Risk, sensor values, reasons, and AI fixes are fixed by scenario.")
+    if demo_history_mode == "Sync with Demo Risk":
+        st.info("Demo Mode is ON: Live cards and Historical Analytics are synced with the fixed risk values.")
+    else:
+        st.info("Demo Mode is ON: Live cards use fixed scenarios, but Historical Analytics still reads from SQLite.")
 
 total_history, total_alerts = read_total_counts()
 h1, h2, h3, h4 = st.columns(4)
 h1.metric("Total History Rows", f"{total_history:,}")
 h2.metric("Total Alert Rows", f"{total_alerts:,}")
 h3.metric("Selected Range", history_range_label)
-h4.metric("Refresh", f"{REFRESH_MS/1000:.0f}s")
+h4.metric("Historical Source", historical_source_label)
 
 # =========================================================
 # OVERVIEW
@@ -656,15 +741,6 @@ for i, line_key in enumerate(LINE_CONFIG.keys()):
             c2.write(f"Temp: {d['temperature']} °C")
 
             render_status_box(line_now["status"])
-
-# =========================================================
-# HISTORICAL DATA LOAD
-# =========================================================
-hist_df = read_history(history_days, selected_history_line)
-
-if not hist_df.empty:
-    hist_df["created_at"] = pd.to_datetime(hist_df["created_at"])
-    hist_df["risk"] = hist_df["risk"].apply(clamp_risk)
 
 # =========================================================
 # TABS
@@ -773,42 +849,79 @@ for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
                 df["risk"] = df["risk"].apply(clamp_risk)
                 st.line_chart(df[["risk"]], use_container_width=True)
             else:
-                st.info("ยังไม่มีข้อมูลกราฟ")
+                st.info("No session chart data yet.")
 
         with st.container(border=True):
-            st.markdown(f"### Recent Alerts from SQLite ({history_range_label})")
-            recent_alerts_df = read_recent_alerts(line_key, limit=5)
+            st.markdown(f"### Historical Trend ({history_range_label})")
+            line_hist_df = hist_df[hist_df["line_key"] == line_key].copy() if not hist_df.empty else pd.DataFrame()
 
-            if not recent_alerts_df.empty:
-                for _, alert in recent_alerts_df.iterrows():
-                    safe_risk = clamp_risk(alert["risk"])
-                    msg = (
-                        f"[{alert['created_at']}] {alert['status']} | "
-                        f"Score {safe_risk} | {alert['reasons']} | "
-                        f"Action: {alert['action']}"
+            if not line_hist_df.empty:
+                trend_line = (
+                    line_hist_df
+                    .assign(created_date_only=line_hist_df["created_at"].dt.date)
+                    .groupby("created_date_only", as_index=False)
+                    .agg(
+                        avg_risk=("risk", "mean"),
+                        max_risk=("risk", "max")
                     )
-                    if alert["status"] == "HIGH RISK":
-                        st.error(msg)
-                    else:
-                        st.warning(msg)
+                    .set_index("created_date_only")
+                )
+                st.line_chart(trend_line[["avg_risk", "max_risk"]], use_container_width=True)
             else:
-                st.info("ยังไม่มีประวัติการแจ้งเตือน")
+                st.info("No historical chart data in the selected range.")
+
+        with st.container(border=True):
+            st.markdown("### Recent Alerts")
+            if demo_mode and demo_history_mode == "Sync with Demo Risk":
+                line_alert_demo = line_hist_df[line_hist_df["status"].isin(["WARNING", "HIGH RISK"])].copy()
+                line_alert_demo = line_alert_demo.sort_values("created_at", ascending=False).head(5)
+
+                if not line_alert_demo.empty:
+                    for _, alert in line_alert_demo.iterrows():
+                        safe_risk = clamp_risk(alert["risk"])
+                        msg = (
+                            f"[{alert['created_at'].strftime('%Y-%m-%d %H:%M:%S')}] "
+                            f"{alert['status']} | Score {safe_risk} | "
+                            f"{alert['reasons']} | Action: {alert['action']}"
+                        )
+                        if alert["status"] == "HIGH RISK":
+                            st.error(msg)
+                        else:
+                            st.warning(msg)
+                else:
+                    st.info("No alert history in selected demo range.")
+            else:
+                recent_alerts_df = read_recent_alerts(line_key, limit=5)
+                if not recent_alerts_df.empty:
+                    for _, alert in recent_alerts_df.iterrows():
+                        safe_risk = clamp_risk(alert["risk"])
+                        msg = (
+                            f"[{alert['created_at']}] {alert['status']} | "
+                            f"Score {safe_risk} | {alert['reasons']} | "
+                            f"Action: {alert['action']}"
+                        )
+                        if alert["status"] == "HIGH RISK":
+                            st.error(msg)
+                        else:
+                            st.warning(msg)
+                else:
+                    st.info("No alert history yet.")
 
 # =========================================================
 # HISTORICAL ANALYTICS TAB
 # =========================================================
 with tabs[-1]:
     st.subheader("Historical Analytics")
-    st.caption(f"ช่วงเวลาที่เลือก: {history_range_label} | Line: {selected_history_line}")
+    st.caption(f"Selected Range: {history_range_label} | Line: {selected_history_line} | Source: {historical_source_label}")
 
     if hist_df.empty:
-        st.warning("ยังไม่มีข้อมูลย้อนหลังในช่วงเวลาที่เลือก")
+        st.warning("No historical data found in the selected range.")
     else:
         top1, top2, top3, top4 = st.columns(4)
         top1.metric("Rows", f"{len(hist_df):,}")
         top2.metric("Avg Risk", f"{hist_df['risk'].mean():.1f}")
-        top3.metric("HIGH RISK", int((hist_df["status"] == "HIGH RISK").sum()))
-        top4.metric("WARNING", int((hist_df["status"] == "WARNING").sum()))
+        top3.metric("HIGH RISK", int((hist_df['status'] == "HIGH RISK").sum()))
+        top4.metric("WARNING", int((hist_df['status'] == "WARNING").sum()))
 
         st.markdown("### Historical Trend")
         trend_df = (
@@ -838,7 +951,7 @@ with tabs[-1]:
                 .agg(
                     avg_risk=("risk", "mean"),
                     max_risk=("risk", "max"),
-                    records=("id", "count")
+                    records=("risk", "count")
                 )
                 .sort_values("avg_risk", ascending=False)
                 .set_index("line_key")
@@ -856,7 +969,7 @@ with tabs[-1]:
                 alert_pivot = alert_dist_df.pivot(index="line_key", columns="status", values="size").fillna(0)
                 st.bar_chart(alert_pivot, use_container_width=True)
             else:
-                st.info("ยังไม่มี WARNING/HIGH RISK ในช่วงเวลานี้")
+                st.info("No WARNING/HIGH RISK records in the selected range.")
 
         b1, b2 = st.columns(2)
 
@@ -868,10 +981,7 @@ with tabs[-1]:
                 .explode()
                 .dropna()
             )
-            reason_df = (
-                reason_series.value_counts()
-                .reset_index()
-            )
+            reason_df = reason_series.value_counts().reset_index()
             reason_df.columns = ["Reason", "Count"]
             st.dataframe(reason_df.head(10), use_container_width=True, hide_index=True)
 
@@ -920,7 +1030,8 @@ with tabs[-1]:
 
         st.markdown("### Raw Historical Data")
         display_df = hist_df.copy()
-        display_df["created_at"] = display_df["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        if not display_df.empty:
+            display_df["created_at"] = display_df["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
         csv_data = to_csv_bytes(display_df)
