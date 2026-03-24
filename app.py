@@ -47,12 +47,12 @@ MAX_SESSION_HISTORY = 100
 MAX_SESSION_ALERTS = 20
 DB_PATH = Path("smartsafe_history.db")
 
-RANGE_OPTIONS = {
-    "7 วัน": 7,
-    "30 วัน": 30,
-    "4 เดือน": 120,
-    "8 เดือน": 240,
-    "1 ปี": 365
+RANGE_OPTIONS =RANGE_OPTIONS = {
+    "7 Days": 7,
+    "30 Days": 30,
+    "4 Months": 120,
+    "8 Months": 240,
+    "1 Year": 365
 }
 
 # =========================================================
