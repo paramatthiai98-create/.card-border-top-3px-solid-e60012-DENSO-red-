@@ -1,23 +1,29 @@
 import random
 import sqlite3
-import time
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 st.set_page_config(
-    page_title="SmartSafe DENSO Production Dashboard",
+    page_title="SmartSafe Co-Pilot Dashboard",
     layout="wide"
 )
 
-REFRESH_INTERVAL = 2  # seconds — native rerun, no extra package needed
+# =========================================================
+# AUTO REFRESH
+# =========================================================
+REFRESH_MS = 2000
+st_autorefresh(interval=REFRESH_MS, key="datarefresh")
 
-# -------------------------
+# =========================================================
 # CONFIG
-# -------------------------
+# =========================================================
 LINE_CONFIG = {
     "Line 1": {
         "name": "Sensor Assembly",
@@ -37,180 +43,87 @@ LINE_CONFIG = {
     }
 }
 
-MAX_HISTORY = 100
-MAX_ALERTS  = 20
-DB_PATH     = Path("smartsafe_history.db")
+MAX_SESSION_HISTORY = 100
+MAX_SESSION_ALERTS = 20
+DB_PATH = Path("smartsafe_history.db")
 
-# -------------------------
-# DATABASE LAYER
-# -------------------------
-@contextmanager
-def get_db():
-    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+RANGE_OPTIONS = {
+    "7 วัน": 7,
+    "30 วัน": 30,
+    "4 เดือน": 120,
+    "8 เดือน": 240,
+    "1 ปี": 365
+}
+
+# =========================================================
+# DATABASE
+# =========================================================
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
-
+    return conn
 
 def init_db():
-    with get_db() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sensor_events (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp   TEXT NOT NULL,
-                line_key    TEXT NOT NULL,
-                helmet      INTEGER,
-                distance    INTEGER,
-                vibration   INTEGER,
-                temperature INTEGER,
-                risk        INTEGER,
-                status      TEXT,
-                action      TEXT,
-                reasons     TEXT,
-                solutions   TEXT
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_ts     ON sensor_events(timestamp)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_line   ON sensor_events(line_key)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON sensor_events(status)")
+    conn = get_conn()
+    cur = conn.cursor()
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        created_date TEXT NOT NULL,
+        created_hour TEXT NOT NULL,
+        line_key TEXT NOT NULL,
+        process_name TEXT NOT NULL,
+        helmet TEXT NOT NULL,
+        distance REAL NOT NULL,
+        vibration REAL NOT NULL,
+        temperature REAL NOT NULL,
+        risk INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reasons TEXT NOT NULL,
+        solutions TEXT NOT NULL,
+        is_demo INTEGER NOT NULL DEFAULT 1
+    )
+    """)
 
-def insert_event(timestamp: str, line_key: str, record: dict):
-    with get_db() as conn:
-        conn.execute("""
-            INSERT INTO sensor_events
-                (timestamp, line_key, helmet, distance, vibration, temperature,
-                 risk, status, action, reasons, solutions)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        """, (
-            timestamp, line_key,
-            1 if record["helmet"] == "YES" else 0,
-            record["distance"], record["vibration"], record["temperature"],
-            record["risk"], record["status"], record["action"],
-            record["reasons"], record["solutions"]
-        ))
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_history_line_time
+    ON history(line_key, created_at)
+    """)
 
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_history_time
+    ON history(created_at)
+    """)
 
-def query_history(line_keys: list, days: int) -> pd.DataFrame:
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    ph = ",".join("?" * len(line_keys))
-    with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT timestamp, line_key, helmet, distance, vibration, temperature,
-                   risk, status, action, reasons
-            FROM sensor_events
-            WHERE timestamp >= ? AND line_key IN ({ph})
-            ORDER BY timestamp
-        """, [since] + line_keys).fetchall()
-    return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS alert_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        line_key TEXT NOT NULL,
+        risk INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        reasons TEXT NOT NULL,
+        action TEXT NOT NULL,
+        is_demo INTEGER NOT NULL DEFAULT 1
+    )
+    """)
 
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_alert_line_time
+    ON alert_log(line_key, created_at)
+    """)
 
-def query_alert_summary(line_keys: list, days: int) -> pd.DataFrame:
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    ph = ",".join("?" * len(line_keys))
-    with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT line_key, status,
-                   COUNT(*)   AS count,
-                   AVG(risk)  AS avg_risk,
-                   MAX(risk)  AS max_risk
-            FROM sensor_events
-            WHERE timestamp >= ? AND line_key IN ({ph})
-              AND status IN ('WARNING','HIGH RISK')
-            GROUP BY line_key, status
-            ORDER BY line_key, status
-        """, [since] + line_keys).fetchall()
-    return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
-
-
-def query_hourly_heatmap(line_key: str, days: int) -> pd.DataFrame:
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT CAST(strftime('%H','timestamp') AS INTEGER) AS hour,
-                   CAST(strftime('%w','timestamp') AS INTEGER) AS dow,
-                   AVG(risk) AS avg_risk
-            FROM sensor_events
-            WHERE timestamp >= ? AND line_key = ?
-            GROUP BY hour, dow
-            ORDER BY hour, dow
-        """, [since, line_key]).fetchall()
-    return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
-
-
-def query_rolling_risk(line_keys: list, days: int) -> pd.DataFrame:
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    ph = ",".join("?" * len(line_keys))
-    with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT strftime('%Y-%m-%d', timestamp) AS date,
-                   line_key,
-                   AVG(risk) AS avg_risk,
-                   MAX(risk) AS max_risk,
-                   SUM(CASE WHEN status='HIGH RISK' THEN 1 ELSE 0 END) AS high_risk_count
-            FROM sensor_events
-            WHERE timestamp >= ? AND line_key IN ({ph})
-            GROUP BY date, line_key
-            ORDER BY date
-        """, [since] + line_keys).fetchall()
-    return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
-
-
-def query_anomaly_events(line_keys: list, days: int) -> pd.DataFrame:
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    ph = ",".join("?" * len(line_keys))
-    with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT timestamp, line_key, risk, status, reasons
-            FROM sensor_events
-            WHERE timestamp >= ? AND line_key IN ({ph})
-              AND status = 'HIGH RISK'
-            ORDER BY timestamp DESC
-            LIMIT 200
-        """, [since] + line_keys).fetchall()
-    return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
-
-
-def get_db_stats() -> dict:
-    with get_db() as conn:
-        total  = conn.execute("SELECT COUNT(*) FROM sensor_events").fetchone()[0]
-        oldest = conn.execute("SELECT MIN(timestamp) FROM sensor_events").fetchone()[0]
-    size_kb = DB_PATH.stat().st_size / 1024 if DB_PATH.exists() else 0
-    return {"total": total, "oldest": oldest, "size_kb": size_kb}
-
+    conn.commit()
+    conn.close()
 
 init_db()
 
-# -------------------------
-# SIDEBAR
-# -------------------------
-st.sidebar.title("Demo Control")
-demo_mode = st.sidebar.toggle("Demo Mode (Fixed Scenario)", value=True)
-
-fixed_risk = {}
-if demo_mode:
-    st.sidebar.markdown("### Set Risk per Line")
-    defaults = {"Line 1": 30, "Line 2": 0, "Line 3": 50, "Line 4": 75}
-    for line in LINE_CONFIG:
-        fixed_risk[line] = st.sidebar.slider(
-            f"{line} Risk", min_value=0, max_value=100,
-            value=defaults[line], step=1
-        )
-
-st.sidebar.divider()
-st.sidebar.markdown("### Database Info")
-stats = get_db_stats()
-st.sidebar.metric("Total records", f"{stats['total']:,}")
-if stats["oldest"]:
-    st.sidebar.caption(f"Oldest: {stats['oldest'][:10]}")
-st.sidebar.caption(f"DB size: {stats['size_kb']:.1f} KB")
-
-# -------------------------
+# =========================================================
 # HELPERS
-# -------------------------
+# =========================================================
 def clamp_risk(value):
     try:
         value = int(round(float(value)))
@@ -218,25 +131,21 @@ def clamp_risk(value):
         return 0
     return max(0, min(value, 100))
 
-
 def progress_value_from_risk(risk):
     return clamp_risk(risk) / 100.0
-
 
 def safe_append_limited(items, value, max_len):
     items.append(value)
     if len(items) > max_len:
         del items[:-max_len]
 
-
 def decision_logic(risk):
     risk = clamp_risk(risk)
     if risk > 80:
         return "HIGH RISK", "STOP MACHINE"
     if risk > 50:
-        return "WARNING",   "CHECK SYSTEM"
-    return "SAFE",          "NORMAL OPERATION"
-
+        return "WARNING", "CHECK SYSTEM"
+    return "SAFE", "NORMAL OPERATION"
 
 def render_status_box(status):
     if status == "SAFE":
@@ -246,7 +155,6 @@ def render_status_box(status):
     else:
         st.error(status)
 
-
 def render_live_alert(line_key, status, reasons):
     if status == "HIGH RISK":
         st.error(f"🚨 {line_key}: HIGH RISK - {', '.join(reasons)}")
@@ -255,43 +163,69 @@ def render_live_alert(line_key, status, reasons):
     else:
         st.success(f"✅ {line_key}: SAFE - No active critical risk")
 
+def now_iso():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# -------------------------
-# RANDOM DATA GENERATORS
-# -------------------------
+def today_str():
+    return datetime.now().strftime("%Y-%m-%d")
+
+def current_hour_str():
+    return datetime.now().strftime("%H:00")
+
+def cutoff_datetime(days):
+    return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+def to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+# =========================================================
+# DATA GENERATION
+# =========================================================
 def generate_random_data_by_line(line_key):
     if line_key == "Line 1":
-        return {"helmet": random.choice([True, False]),
-                "distance": random.randint(15, 80),
-                "vibration": random.randint(10, 60),
-                "temperature": random.randint(25, 45)}
+        return {
+            "helmet": random.choice([True, False]),
+            "distance": random.randint(15, 80),
+            "vibration": random.randint(10, 60),
+            "temperature": random.randint(25, 45)
+        }
     if line_key == "Line 2":
-        return {"helmet": random.choice([True, False]),
-                "distance": random.randint(20, 90),
-                "vibration": random.randint(5, 40),
-                "temperature": random.randint(30, 65)}
+        return {
+            "helmet": random.choice([True, False]),
+            "distance": random.randint(20, 90),
+            "vibration": random.randint(5, 40),
+            "temperature": random.randint(30, 65)
+        }
     if line_key == "Line 3":
-        return {"helmet": random.choice([True, False]),
-                "distance": random.randint(10, 70),
-                "vibration": random.randint(25, 90),
-                "temperature": random.randint(28, 55)}
-    return {"helmet": random.choice([True, False]),
-            "distance": random.randint(15, 85),
-            "vibration": random.randint(10, 75),
-            "temperature": random.randint(35, 80)}
-
+        return {
+            "helmet": random.choice([True, False]),
+            "distance": random.randint(10, 70),
+            "vibration": random.randint(25, 90),
+            "temperature": random.randint(28, 55)
+        }
+    return {
+        "helmet": random.choice([True, False]),
+        "distance": random.randint(15, 85),
+        "vibration": random.randint(10, 75),
+        "temperature": random.randint(35, 80)
+    }
 
 def calculate_risk_by_line(d, line_key):
-    risk, reasons = 0, []
+    risk = 0
+    reasons = []
+
     if not d["helmet"]:
         risk += 40 if line_key == "Line 4" else 30
         reasons.append("No helmet detected")
+
     if d["distance"] < 30:
         risk += 45 if line_key == "Line 3" else 40
         reasons.append("Worker too close to machine")
+
     if d["vibration"] > 70:
         risk += 45 if line_key == "Line 3" else 35
         reasons.append("High machine vibration")
+
     if d["temperature"] > 60:
         if line_key in ["Line 2", "Line 4"]:
             risk += 35
@@ -299,11 +233,12 @@ def calculate_risk_by_line(d, line_key):
         elif d["temperature"] > 70:
             risk += 20
             reasons.append("High operating temperature")
-    return clamp_risk(risk), reasons
 
+    return clamp_risk(risk), reasons
 
 def ai_solution_by_line(reasons, line_key):
     solutions = []
+
     if "No helmet detected" in reasons:
         solutions.append("ให้พนักงานสวมหมวกนิรภัยก่อนเข้าพื้นที่ปฏิบัติงาน")
         if line_key == "Line 1":
@@ -312,12 +247,14 @@ def ai_solution_by_line(reasons, line_key):
             solutions.append("เพิ่มมาตรการ PPE เข้มงวดในพื้นที่ EV / High Voltage")
         else:
             solutions.append("ติดตั้งระบบตรวจจับ PPE อัตโนมัติ")
+
     if "Worker too close to machine" in reasons:
         if line_key == "Line 3":
             solutions.append("เพิ่มระยะปลอดภัยจากเครื่องจักรความเร็วสูงในไลน์หัวฉีด")
         else:
             solutions.append("เพิ่มระยะปลอดภัยระหว่างคนงานกับเครื่องจักร")
         solutions.append("กำหนดเขต safe zone ให้ชัดเจน")
+
     if "High machine vibration" in reasons:
         if line_key == "Line 3":
             solutions.append("ตรวจสอบเครื่องจักร precision machining และ fixture ทันที")
@@ -325,6 +262,7 @@ def ai_solution_by_line(reasons, line_key):
             solutions.append("ตรวจสอบการสั่นสะเทือนของเครื่องจักรทันที")
         solutions.append("หยุดเครื่องเพื่อตรวจเช็กความผิดปกติ")
         solutions.append("วางแผนบำรุงรักษาเชิงป้องกัน")
+
     if "High operating temperature" in reasons:
         if line_key == "Line 2":
             solutions.append("ตรวจสอบระบบระบายความร้อนใน ECU/PCB line")
@@ -334,77 +272,271 @@ def ai_solution_by_line(reasons, line_key):
             solutions.append("แยกพื้นที่ความร้อนสูงและเพิ่มระบบระบายอากาศ")
         else:
             solutions.append("ตรวจสอบอุณหภูมิการทำงานของอุปกรณ์")
+
     if not solutions:
         solutions.append("ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง")
+
     return solutions
 
+def ai_pattern_recommendation(df_line: pd.DataFrame, line_key: str):
+    if df_line.empty:
+        return "ยังไม่มีข้อมูลย้อนหลังเพียงพอ"
 
-# -------------------------
+    msg = []
+    high_count = int((df_line["status"] == "HIGH RISK").sum())
+    warning_count = int((df_line["status"] == "WARNING").sum())
+    avg_risk = float(df_line["risk"].mean())
+
+    if high_count >= 10:
+        msg.append("พบ HIGH RISK ซ้ำหลายครั้ง ควรทำ root cause analysis และกำหนด owner รายไลน์")
+    if warning_count >= 20:
+        msg.append("พบ WARNING สะสมจำนวนมาก ควรเปิด preventive review รายกะ")
+    if avg_risk >= 60:
+        msg.append("ค่าเฉลี่ยความเสี่ยงค่อนข้างสูง ควรเพิ่ม inspection frequency")
+
+    helmet_no_rate = (df_line["helmet"] == "NO").mean() if len(df_line) else 0
+    if helmet_no_rate >= 0.25:
+        msg.append("พบอัตราไม่สวม PPE สูง ควรเพิ่ม PPE checkpoint ก่อนเข้าไลน์")
+
+    if (df_line["vibration"] > 70).mean() >= 0.20:
+        msg.append("พบ vibration สูงซ้ำ ควรวางแผน preventive maintenance")
+
+    if (df_line["temperature"] > 60).mean() >= 0.20:
+        msg.append("พบอุณหภูมิสูงซ้ำ ควรตรวจสอบระบบระบายความร้อนและ ventilation")
+
+    if not msg:
+        return f"{line_key}: แนวโน้มย้อนหลังยังอยู่ในเกณฑ์ควบคุมได้ ให้ติดตามต่อเนื่อง"
+
+    return f"{line_key}: " + " | ".join(msg[:3])
+
+# =========================================================
 # DEMO FIXED SCENARIO
-# -------------------------
+# =========================================================
 def demo_fixed_data_by_risk(risk, line_key):
     risk = clamp_risk(risk)
 
     if risk <= 50:
-        maps = {
-            "Line 1": {"helmet": True, "distance": 65, "vibration": 22, "temperature": 34},
-            "Line 2": {"helmet": True, "distance": 70, "vibration": 18, "temperature": 42},
-            "Line 3": {"helmet": True, "distance": 55, "vibration": 35, "temperature": 40},
-            "Line 4": {"helmet": True, "distance": 60, "vibration": 30, "temperature": 48},
-        }
-        return maps[line_key], ["Normal operating condition"], ["ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง"]
+        if line_key == "Line 1":
+            d = {"helmet": True, "distance": 65, "vibration": 22, "temperature": 34}
+            reasons = ["Normal operating condition"]
+        elif line_key == "Line 2":
+            d = {"helmet": True, "distance": 70, "vibration": 18, "temperature": 42}
+            reasons = ["Normal operating condition"]
+        elif line_key == "Line 3":
+            d = {"helmet": True, "distance": 55, "vibration": 35, "temperature": 40}
+            reasons = ["Normal operating condition"]
+        else:
+            d = {"helmet": True, "distance": 60, "vibration": 30, "temperature": 48}
+            reasons = ["Normal operating condition"]
+
+        solutions = ["ระบบอยู่ในเกณฑ์ปกติ ให้ติดตามต่อเนื่อง"]
+        return d, reasons, solutions
 
     if risk <= 80:
-        maps = {
-            "Line 1": ({"helmet": False, "distance": 28, "vibration": 45, "temperature": 38},
-                       ["No helmet detected", "Worker too close to machine"]),
-            "Line 2": ({"helmet": True,  "distance": 45, "vibration": 25, "temperature": 66},
-                       ["High operating temperature"]),
-            "Line 3": ({"helmet": True,  "distance": 25, "vibration": 78, "temperature": 44},
-                       ["Worker too close to machine", "High machine vibration"]),
-            "Line 4": ({"helmet": False, "distance": 40, "vibration": 50, "temperature": 67},
-                       ["No helmet detected", "High operating temperature"]),
-        }
-        d, reasons = maps[line_key]
-        return d, reasons, ai_solution_by_line(reasons, line_key)
+        if line_key == "Line 1":
+            d = {"helmet": False, "distance": 28, "vibration": 45, "temperature": 38}
+            reasons = ["No helmet detected", "Worker too close to machine"]
+        elif line_key == "Line 2":
+            d = {"helmet": True, "distance": 45, "vibration": 25, "temperature": 66}
+            reasons = ["High operating temperature"]
+        elif line_key == "Line 3":
+            d = {"helmet": True, "distance": 25, "vibration": 78, "temperature": 44}
+            reasons = ["Worker too close to machine", "High machine vibration"]
+        else:
+            d = {"helmet": False, "distance": 40, "vibration": 50, "temperature": 67}
+            reasons = ["No helmet detected", "High operating temperature"]
 
-    maps = {
-        "Line 1": ({"helmet": False, "distance": 18, "vibration": 55, "temperature": 42},
-                   ["No helmet detected", "Worker too close to machine"]),
-        "Line 2": ({"helmet": False, "distance": 35, "vibration": 30, "temperature": 75},
-                   ["No helmet detected", "High operating temperature"]),
-        "Line 3": ({"helmet": False, "distance": 15, "vibration": 85, "temperature": 49},
-                   ["No helmet detected", "Worker too close to machine", "High machine vibration"]),
-        "Line 4": ({"helmet": False, "distance": 22, "vibration": 72, "temperature": 78},
-                   ["No helmet detected", "Worker too close to machine",
-                    "High machine vibration", "High operating temperature"]),
-    }
-    d, reasons = maps[line_key]
-    return d, reasons, ai_solution_by_line(reasons, line_key)
+        solutions = ai_solution_by_line(reasons, line_key)
+        return d, reasons, solutions
 
+    if line_key == "Line 1":
+        d = {"helmet": False, "distance": 18, "vibration": 55, "temperature": 42}
+        reasons = ["No helmet detected", "Worker too close to machine"]
+    elif line_key == "Line 2":
+        d = {"helmet": False, "distance": 35, "vibration": 30, "temperature": 75}
+        reasons = ["No helmet detected", "High operating temperature"]
+    elif line_key == "Line 3":
+        d = {"helmet": False, "distance": 15, "vibration": 85, "temperature": 49}
+        reasons = ["No helmet detected", "Worker too close to machine", "High machine vibration"]
+    else:
+        d = {"helmet": False, "distance": 22, "vibration": 72, "temperature": 78}
+        reasons = ["No helmet detected", "Worker too close to machine", "High machine vibration", "High operating temperature"]
 
-# -------------------------
-# SESSION STATE INIT
-# -------------------------
+    solutions = ai_solution_by_line(reasons, line_key)
+    return d, reasons, solutions
+
+# =========================================================
+# DB WRITE / READ
+# =========================================================
+def insert_history_record(record: dict):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO history (
+            created_at, created_date, created_hour, line_key, process_name,
+            helmet, distance, vibration, temperature, risk, status, action,
+            reasons, solutions, is_demo
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record["created_at"],
+        record["created_date"],
+        record["created_hour"],
+        record["line_key"],
+        record["process_name"],
+        record["helmet"],
+        record["distance"],
+        record["vibration"],
+        record["temperature"],
+        record["risk"],
+        record["status"],
+        record["action"],
+        record["reasons"],
+        record["solutions"],
+        record["is_demo"]
+    ))
+    conn.commit()
+    conn.close()
+
+def insert_alert_record(record: dict):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO alert_log (
+            created_at, line_key, risk, status, reasons, action, is_demo
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        record["created_at"],
+        record["line_key"],
+        record["risk"],
+        record["status"],
+        record["reasons"],
+        record["action"],
+        record["is_demo"]
+    ))
+    conn.commit()
+    conn.close()
+
+def read_history(days: int, line_key: str | None = None):
+    conn = get_conn()
+    cutoff = cutoff_datetime(days)
+    if line_key and line_key != "All Lines":
+        query = """
+            SELECT * FROM history
+            WHERE created_at >= ? AND line_key = ?
+            ORDER BY created_at ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(cutoff, line_key))
+    else:
+        query = """
+            SELECT * FROM history
+            WHERE created_at >= ?
+            ORDER BY created_at ASC
+        """
+        df = pd.read_sql_query(query, conn, params=(cutoff,))
+    conn.close()
+    return df
+
+def read_recent_alerts(line_key: str, limit: int = 5):
+    conn = get_conn()
+    query = """
+        SELECT created_at, risk, status, reasons, action
+        FROM alert_log
+        WHERE line_key = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+    """
+    df = pd.read_sql_query(query, conn, params=(line_key, limit))
+    conn.close()
+    return df
+
+def read_total_counts():
+    conn = get_conn()
+    cur = conn.cursor()
+    total_history = cur.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+    total_alerts = cur.execute("SELECT COUNT(*) FROM alert_log").fetchone()[0]
+    conn.close()
+    return total_history, total_alerts
+
+def delete_older_than(days: int):
+    cutoff = cutoff_datetime(days)
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM history WHERE created_at < ?", (cutoff,))
+    cur.execute("DELETE FROM alert_log WHERE created_at < ?", (cutoff,))
+    conn.commit()
+    deleted = conn.total_changes
+    conn.close()
+    return deleted
+
+# =========================================================
+# SESSION STATE
+# =========================================================
 if "line_history" not in st.session_state:
-    st.session_state.line_history = {line: [] for line in LINE_CONFIG}
+    st.session_state.line_history = {line: [] for line in LINE_CONFIG.keys()}
+
 if "line_alerts" not in st.session_state:
-    st.session_state.line_alerts = {line: [] for line in LINE_CONFIG}
-if "last_saved_minute" not in st.session_state:
-    st.session_state.last_saved_minute = ""
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "live"
+    st.session_state.line_alerts = {line: [] for line in LINE_CONFIG.keys()}
 
-# -------------------------
-# GENERATE CURRENT DATA + PERSIST
-# -------------------------
+# =========================================================
+# SIDEBAR
+# =========================================================
+st.sidebar.title("Control Panel")
+
+demo_mode = st.sidebar.toggle("Demo Mode (Fixed Scenario)", value=True)
+
+fixed_risk = {}
+if demo_mode:
+    st.sidebar.markdown("### Set Risk per Line")
+    for line in LINE_CONFIG.keys():
+        default_value = 30
+        if line == "Line 2":
+            default_value = 0
+        elif line == "Line 3":
+            default_value = 50
+        elif line == "Line 4":
+            default_value = 75
+
+        fixed_risk[line] = st.sidebar.slider(
+            f"{line} Risk",
+            min_value=0,
+            max_value=100,
+            value=default_value,
+            step=1
+        )
+
+st.sidebar.markdown("---")
+history_range_label = st.sidebar.selectbox(
+    "Historical Range",
+    list(RANGE_OPTIONS.keys()),
+    index=2
+)
+history_days = RANGE_OPTIONS[history_range_label]
+
+selected_history_line = st.sidebar.selectbox(
+    "Historical Line Filter",
+    ["All Lines"] + list(LINE_CONFIG.keys()),
+    index=0
+)
+
+st.sidebar.markdown("---")
+retention_days = st.sidebar.selectbox(
+    "Data Retention",
+    [30, 90, 180, 365, 730],
+    index=3
+)
+
+if st.sidebar.button("Clean Old Data"):
+    deleted_rows = delete_older_than(retention_days)
+    st.sidebar.success(f"ลบข้อมูลเก่าแล้ว {deleted_rows} รายการ")
+
+# =========================================================
+# GENERATE CURRENT DATA + SAVE TO DB
+# =========================================================
 current_line_data = {}
-now            = datetime.now()
-now_str        = now.strftime("%Y-%m-%d %H:%M:%S")
-current_minute = now.strftime("%Y-%m-%d %H:%M")
-should_save    = (current_minute != st.session_state.last_saved_minute)
 
-for line_key in LINE_CONFIG:
+for line_key in LINE_CONFIG.keys():
     if demo_mode:
         risk = clamp_risk(fixed_risk[line_key])
         d, reasons, solutions = demo_fixed_data_by_risk(risk, line_key)
@@ -415,132 +547,195 @@ for line_key in LINE_CONFIG:
 
     risk = clamp_risk(risk)
     status, action = decision_logic(risk)
+    ts = now_iso()
 
     record = {
-        "time":        now.strftime("%H:%M:%S"),
-        "helmet":      "YES" if d["helmet"] else "NO",
-        "distance":    d["distance"],
-        "vibration":   d["vibration"],
+        "created_at": ts,
+        "created_date": today_str(),
+        "created_hour": current_hour_str(),
+        "line_key": line_key,
+        "process_name": LINE_CONFIG[line_key]["name"],
+        "helmet": "YES" if d["helmet"] else "NO",
+        "distance": d["distance"],
+        "vibration": d["vibration"],
         "temperature": d["temperature"],
-        "risk":        risk,
-        "status":      status,
-        "action":      action,
-        "reasons":     ", ".join(reasons) if reasons else "No active risk detected",
-        "solutions":   " | ".join(solutions),
+        "risk": risk,
+        "status": status,
+        "action": action,
+        "reasons": ", ".join(reasons) if reasons else "No active risk detected",
+        "solutions": " | ".join(solutions),
+        "is_demo": 1 if demo_mode else 0
     }
 
-    safe_append_limited(st.session_state.line_history[line_key], record, MAX_HISTORY)
+    insert_history_record(record)
 
-    if should_save:
-        insert_event(now_str, line_key, record)
+    session_record = {
+        "time": ts,
+        "helmet": record["helmet"],
+        "distance": record["distance"],
+        "vibration": record["vibration"],
+        "temperature": record["temperature"],
+        "risk": record["risk"],
+        "status": record["status"],
+        "action": record["action"],
+        "reasons": record["reasons"],
+        "solutions": record["solutions"]
+    }
+    safe_append_limited(st.session_state.line_history[line_key], session_record, MAX_SESSION_HISTORY)
 
-    if status in ("WARNING", "HIGH RISK"):
-        new_alert = {k: record[k] for k in ("time", "risk", "status", "reasons", "action")}
-        hist = st.session_state.line_alerts[line_key]
-        if (not hist
-                or hist[-1]["reasons"] != new_alert["reasons"]
-                or hist[-1]["status"]  != new_alert["status"]):
-            safe_append_limited(hist, new_alert, MAX_ALERTS)
+    if status in ["WARNING", "HIGH RISK"]:
+        new_alert = {
+            "created_at": ts,
+            "line_key": line_key,
+            "risk": risk,
+            "status": status,
+            "reasons": record["reasons"],
+            "action": action,
+            "is_demo": 1 if demo_mode else 0
+        }
+
+        alert_history = st.session_state.line_alerts[line_key]
+        should_append = (
+            len(alert_history) == 0
+            or alert_history[-1]["reasons"] != new_alert["reasons"]
+            or alert_history[-1]["status"] != new_alert["status"]
+        )
+        if should_append:
+            safe_append_limited(alert_history, new_alert, MAX_SESSION_ALERTS)
+            insert_alert_record(new_alert)
 
     current_line_data[line_key] = {
-        "data": d, "risk": risk, "reasons": reasons,
-        "status": status, "action": action, "solutions": solutions,
+        "data": d,
+        "risk": risk,
+        "reasons": reasons,
+        "status": status,
+        "action": action,
+        "solutions": solutions
     }
 
-if should_save:
-    st.session_state.last_saved_minute = current_minute
-
-# -------------------------
+# =========================================================
 # HEADER
-# -------------------------
+# =========================================================
 st.title("SmartSafe Co-Pilot Dashboard")
-st.caption("DENSO-style production safety monitoring — real-time + historical analysis")
+st.caption("DENSO-style production safety monitoring across 4 lines with SQLite historical storage")
 
 if demo_mode:
-    st.info("Demo Mode ON — risk, sensor values and AI fixes are scenario-driven.")
+    st.info("Demo Mode is ON: Risk, sensor values, reasons, and AI fixes are fixed by scenario.")
 
-# -------------------------
-# OVERVIEW CARDS
-# -------------------------
+total_history, total_alerts = read_total_counts()
+h1, h2, h3, h4 = st.columns(4)
+h1.metric("Total History Rows", f"{total_history:,}")
+h2.metric("Total Alert Rows", f"{total_alerts:,}")
+h3.metric("Selected Range", history_range_label)
+h4.metric("Refresh", f"{REFRESH_MS/1000:.0f}s")
+
+# =========================================================
+# OVERVIEW
+# =========================================================
 st.subheader("Overview")
-ov_cols = st.columns(4, gap="medium")
-for i, line_key in enumerate(LINE_CONFIG):
-    with ov_cols[i]:
-        info    = LINE_CONFIG[line_key]
+overview_cols = st.columns(4, gap="medium")
+
+for i, line_key in enumerate(LINE_CONFIG.keys()):
+    with overview_cols[i]:
+        line_info = LINE_CONFIG[line_key]
         line_now = current_line_data[line_key]
-        d       = line_now["data"]
+        d = line_now["data"]
+
         with st.container(border=True):
-            l, r = st.columns([2, 1])
-            with l:
+            left, right = st.columns([2, 1])
+            with left:
                 st.markdown(f"**{line_key}**")
-                st.write(info["name"])
-            with r:
+                st.write(line_info["name"])
+            with right:
                 st.metric("Risk", line_now["risk"])
-            st.caption(info["description"])
+
+            st.caption(line_info["description"])
+
             c1, c2 = st.columns(2)
             c1.write(f"Helmet: {'YES' if d['helmet'] else 'NO'}")
             c2.write(f"Temp: {d['temperature']} °C")
+
             render_status_box(line_now["status"])
 
-# -------------------------
-# TABS
-# -------------------------
-tab_labels = ["Overview All"] + list(LINE_CONFIG.keys()) + ["📊 Historical Analysis"]
-tabs = st.tabs(tab_labels)
+# =========================================================
+# HISTORICAL DATA LOAD
+# =========================================================
+hist_df = read_history(history_days, selected_history_line)
 
-# ── Tab 0 : Overview All ────────────────────────────────────────────────────
+if not hist_df.empty:
+    hist_df["created_at"] = pd.to_datetime(hist_df["created_at"])
+    hist_df["risk"] = hist_df["risk"].apply(clamp_risk)
+
+# =========================================================
+# TABS
+# =========================================================
+tab_names = ["Overview All"] + list(LINE_CONFIG.keys()) + ["Historical Analytics"]
+tabs = st.tabs(tab_names)
+
+# =========================================================
+# TAB 0 - OVERVIEW ALL
+# =========================================================
 with tabs[0]:
-    st.session_state.active_tab = "live"
     st.subheader("All Production Lines Summary")
 
-    rows = []
-    for lk, info in LINE_CONFIG.items():
-        ln = current_line_data[lk]
-        d  = ln["data"]
-        rows.append({
-            "Line": lk, "Process": info["name"],
+    summary_rows = []
+    for line_key, line_info in LINE_CONFIG.items():
+        line_now = current_line_data[line_key]
+        d = line_now["data"]
+        summary_rows.append({
+            "Line": line_key,
+            "Process": line_info["name"],
             "Helmet": "YES" if d["helmet"] else "NO",
-            "Distance (cm)": d["distance"], "Vibration": d["vibration"],
+            "Distance (cm)": d["distance"],
+            "Vibration": d["vibration"],
             "Temperature (°C)": d["temperature"],
-            "Risk": ln["risk"], "Status": ln["status"], "Action": ln["action"],
+            "Risk": line_now["risk"],
+            "Status": line_now["status"],
+            "Action": line_now["action"]
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     st.subheader("Risk Comparison")
-    rc = pd.DataFrame({
+    risk_compare = pd.DataFrame({
         "Line": list(LINE_CONFIG.keys()),
-        "Risk Score": [clamp_risk(current_line_data[lk]["risk"]) for lk in LINE_CONFIG],
+        "Risk Score": [clamp_risk(current_line_data[line]["risk"]) for line in LINE_CONFIG.keys()]
     }).set_index("Line")
-    st.line_chart(rc, use_container_width=True)
+    st.line_chart(risk_compare, use_container_width=True)
 
-# ── Tabs 1-4 : Per-line ─────────────────────────────────────────────────────
-for idx, line_key in enumerate(LINE_CONFIG, start=1):
+# =========================================================
+# LINE TABS
+# =========================================================
+for idx, line_key in enumerate(LINE_CONFIG.keys(), start=1):
     with tabs[idx]:
-        st.session_state.active_tab = "live"
-        info     = LINE_CONFIG[line_key]
+        line_info = LINE_CONFIG[line_key]
         line_now = current_line_data[line_key]
-        d        = line_now["data"]
-        risk     = clamp_risk(line_now["risk"])
-        reasons  = line_now["reasons"]
-        status   = line_now["status"]
-        action   = line_now["action"]
+        d = line_now["data"]
+        risk = clamp_risk(line_now["risk"])
+        reasons = line_now["reasons"]
+        status = line_now["status"]
+        action = line_now["action"]
         solutions = line_now["solutions"]
 
-        st.subheader(f"{line_key} — {info['name']}")
-        st.caption(info["description"])
+        st.subheader(f"{line_key} - {line_info['name']}")
+        st.caption(line_info["description"])
 
-        c1, c2, c3 = st.columns(3, gap="large")
-        with c1:
+        col1, col2, col3 = st.columns(3, gap="large")
+
+        with col1:
             with st.container(border=True):
                 st.markdown("### Worker Status")
-                st.metric("Helmet",   "YES" if d["helmet"] else "NO")
+                st.metric("Helmet", "YES" if d["helmet"] else "NO")
                 st.metric("Distance", f"{d['distance']} cm")
-        with c2:
+
+        with col2:
             with st.container(border=True):
                 st.markdown("### Machine Status")
-                st.metric("Vibration",   d["vibration"])
+                st.metric("Vibration", d["vibration"])
                 st.metric("Temperature", f"{d['temperature']} °C")
-        with c3:
+
+        with col3:
             with st.container(border=True):
                 st.markdown("### Risk Analysis")
                 st.metric("Risk Score", risk)
@@ -551,13 +746,19 @@ for idx, line_key in enumerate(LINE_CONFIG, start=1):
         render_live_alert(line_key, status, reasons)
 
         left, right = st.columns([1, 1.15], gap="large")
+
         with left:
             with st.container(border=True):
                 st.markdown("### AI Decision Support")
                 st.write(f"Recommended Action: **{action}**")
+
                 st.markdown("### Explainable AI")
-                for r in (reasons if reasons else ["No active risk detected"]):
-                    st.write(f"- {r}")
+                if reasons:
+                    for r in reasons:
+                        st.write(f"- {r}")
+                else:
+                    st.write("- No active risk detected")
+
         with right:
             with st.container(border=True):
                 st.markdown("### AI Recommended Fix")
@@ -565,22 +766,27 @@ for idx, line_key in enumerate(LINE_CONFIG, start=1):
                     st.info(s)
 
         with st.container(border=True):
-            st.markdown("### Risk Trend")
-            df_rt = pd.DataFrame(st.session_state.line_history[line_key])
-            if "risk" in df_rt.columns and not df_rt.empty:
-                df_rt["risk"] = df_rt["risk"].apply(clamp_risk)
-                st.line_chart(df_rt[["risk"]], use_container_width=True)
+            st.markdown("### Session Risk Trend")
+            df = pd.DataFrame(st.session_state.line_history[line_key])
+
+            if "risk" in df.columns and not df.empty:
+                df["risk"] = df["risk"].apply(clamp_risk)
+                st.line_chart(df[["risk"]], use_container_width=True)
             else:
                 st.info("ยังไม่มีข้อมูลกราฟ")
 
         with st.container(border=True):
-            st.markdown("### Recent Alerts")
-            alerts = st.session_state.line_alerts[line_key]
-            if alerts:
-                for alert in reversed(alerts[-5:]):
-                    msg = (f"[{alert['time']}] {alert['status']} | "
-                           f"Score {clamp_risk(alert['risk'])} | "
-                           f"{alert['reasons']} | Action: {alert['action']}")
+            st.markdown(f"### Recent Alerts from SQLite ({history_range_label})")
+            recent_alerts_df = read_recent_alerts(line_key, limit=5)
+
+            if not recent_alerts_df.empty:
+                for _, alert in recent_alerts_df.iterrows():
+                    safe_risk = clamp_risk(alert["risk"])
+                    msg = (
+                        f"[{alert['created_at']}] {alert['status']} | "
+                        f"Score {safe_risk} | {alert['reasons']} | "
+                        f"Action: {alert['action']}"
+                    )
                     if alert["status"] == "HIGH RISK":
                         st.error(msg)
                     else:
@@ -588,178 +794,139 @@ for idx, line_key in enumerate(LINE_CONFIG, start=1):
             else:
                 st.info("ยังไม่มีประวัติการแจ้งเตือน")
 
-# ── Tab 5 : Historical Analysis ──────────────────────────────────────────────
-with tabs[5]:
-    st.session_state.active_tab = "historical"
-    st.subheader("📊 Historical Analysis")
-    st.caption("วิเคราะห์ข้อมูลย้อนหลังจากฐานข้อมูล SQLite")
+# =========================================================
+# HISTORICAL ANALYTICS TAB
+# =========================================================
+with tabs[-1]:
+    st.subheader("Historical Analytics")
+    st.caption(f"ช่วงเวลาที่เลือก: {history_range_label} | Line: {selected_history_line}")
 
-    ctrl1, ctrl2, _ = st.columns([1, 1, 2])
-    with ctrl1:
-        period_label = st.selectbox(
-            "ช่วงเวลา",
-            options=["7 วัน", "1 เดือน", "4 เดือน", "8 เดือน", "1 ปี"],
-            index=0,
-        )
-    with ctrl2:
-        selected_lines = st.multiselect(
-            "เลือกไลน์",
-            options=list(LINE_CONFIG.keys()),
-            default=list(LINE_CONFIG.keys()),
-        )
-
-    period_map = {
-        "7 วัน": 7, "1 เดือน": 30,
-        "4 เดือน": 120, "8 เดือน": 240, "1 ปี": 365,
-    }
-    days = period_map[period_label]
-
-    if not selected_lines:
-        st.warning("กรุณาเลือกอย่างน้อย 1 ไลน์")
+    if hist_df.empty:
+        st.warning("ยังไม่มีข้อมูลย้อนหลังในช่วงเวลาที่เลือก")
     else:
-        df_hist = query_history(selected_lines, days)
+        top1, top2, top3, top4 = st.columns(4)
+        top1.metric("Rows", f"{len(hist_df):,}")
+        top2.metric("Avg Risk", f"{hist_df['risk'].mean():.1f}")
+        top3.metric("HIGH RISK", int((hist_df["status"] == "HIGH RISK").sum()))
+        top4.metric("WARNING", int((hist_df["status"] == "WARNING").sum()))
 
-        if df_hist.empty:
-            st.info(
-                f"ยังไม่มีข้อมูลในช่วง {period_label} ที่เลือก\n\n"
-                "ระบบบันทึก 1 ครั้ง/นาที — รอให้ระบบทำงานสักครู่แล้วลองใหม่ครับ"
+        st.markdown("### Historical Trend")
+        trend_df = (
+            hist_df
+            .assign(created_date_only=hist_df["created_at"].dt.date)
+            .groupby(["created_date_only", "line_key"], as_index=False)
+            .agg(
+                avg_risk=("risk", "mean"),
+                max_risk=("risk", "max"),
+                alerts=("status", lambda s: int((s.isin(["WARNING", "HIGH RISK"])).sum()))
             )
+        )
+
+        if selected_history_line == "All Lines":
+            pivot_avg = trend_df.pivot(index="created_date_only", columns="line_key", values="avg_risk")
+            st.line_chart(pivot_avg, use_container_width=True)
         else:
-            df_hist["timestamp"] = pd.to_datetime(df_hist["timestamp"])
+            one_line = trend_df[trend_df["line_key"] == selected_history_line].set_index("created_date_only")
+            st.line_chart(one_line[["avg_risk", "max_risk"]], use_container_width=True)
 
-            # ── 1. Daily risk trend ─────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### แนวโน้มความเสี่ยงรายวัน (Daily Risk Trend)")
+        a1, a2 = st.columns(2)
 
-            df_daily = query_rolling_risk(selected_lines, days)
-            if not df_daily.empty:
-                pivot_avg = df_daily.pivot_table(
-                    index="date", columns="line_key", values="avg_risk"
-                ).ffill()
-                st.line_chart(pivot_avg, use_container_width=True)
-
-                pivot_high = df_daily.pivot_table(
-                    index="date", columns="line_key", values="high_risk_count"
-                ).fillna(0)
-                st.caption("จำนวน HIGH RISK events ต่อวัน")
-                st.bar_chart(pivot_high, use_container_width=True)
-
-            # ── 2. Alert summary ────────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### สรุป Alert (Alert Summary)")
-
-            df_summary = query_alert_summary(selected_lines, days)
-            if not df_summary.empty:
-                df_summary["avg_risk"] = df_summary["avg_risk"].round(1)
-                df_summary.columns = ["Line", "Status", "Count", "Avg Risk", "Max Risk"]
-                st.dataframe(df_summary, use_container_width=True, hide_index=True)
-
-                m_cols = st.columns(len(selected_lines))
-                for i, lk in enumerate(selected_lines):
-                    sub = df_summary[df_summary["Line"] == lk]
-                    total = int(sub["Count"].sum()) if not sub.empty else 0
-                    with m_cols[i]:
-                        st.metric(lk, f"{total} alerts")
-            else:
-                st.success("ไม่มี alert ในช่วงเวลาที่เลือก ✅")
-
-            # ── 3. Shift / hour heatmap ─────────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### Shift Heatmap — ชั่วโมงที่มีความเสี่ยงสูง")
-
-            hm_line = st.selectbox(
-                "เลือกไลน์สำหรับ heatmap", options=selected_lines, key="hm_line"
+        with a1:
+            st.markdown("### Risk by Line")
+            risk_line_df = (
+                hist_df.groupby("line_key", as_index=False)
+                .agg(
+                    avg_risk=("risk", "mean"),
+                    max_risk=("risk", "max"),
+                    records=("id", "count")
+                )
+                .sort_values("avg_risk", ascending=False)
+                .set_index("line_key")
             )
-            df_hm = query_hourly_heatmap(hm_line, days)
+            st.bar_chart(risk_line_df[["avg_risk", "max_risk"]], use_container_width=True)
 
-            if not df_hm.empty:
-                dow_labels = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"]
-                df_hm["dow_label"] = df_hm["dow"].map(lambda x: dow_labels[int(x)])
-
-# ✅ แก้แล้ว — guard None และ NaN
-lambda x: dow_labels[int(x)] if x is not None and str(x) != "nan" else "?"
-                pivot_hm = (
-                    df_hm.pivot_table(index="hour", columns="dow_label", values="avg_risk")
-                    .reindex(columns=dow_labels)
-                    .fillna(0)
-                )
-                st.dataframe(
-                    pivot_hm.style.background_gradient(cmap="RdYlGn_r", vmin=0, vmax=100),
-                    use_container_width=True,
-                )
-                st.caption(
-                    "สี: เขียว = ปลอดภัย / แดง = ความเสี่ยงสูง | "
-                    "แถว = ชั่วโมง (0–23), คอลัมน์ = วันในสัปดาห์"
-                )
+        with a2:
+            st.markdown("### Alert Distribution")
+            alert_dist_df = (
+                hist_df[hist_df["status"].isin(["WARNING", "HIGH RISK"])]
+                .groupby(["line_key", "status"], as_index=False)
+                .size()
+            )
+            if not alert_dist_df.empty:
+                alert_pivot = alert_dist_df.pivot(index="line_key", columns="status", values="size").fillna(0)
+                st.bar_chart(alert_pivot, use_container_width=True)
             else:
-                st.info("ยังไม่มีข้อมูลสำหรับ heatmap")
+                st.info("ยังไม่มี WARNING/HIGH RISK ในช่วงเวลานี้")
 
-            # ── 4. Anomaly events ───────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### 🚨 Anomaly Events (HIGH RISK incidents)")
+        b1, b2 = st.columns(2)
 
-            df_anomaly = query_anomaly_events(selected_lines, days)
-            if not df_anomaly.empty:
-                st.metric("HIGH RISK events ทั้งหมด", len(df_anomaly))
-                st.dataframe(
-                    df_anomaly.rename(columns={
-                        "timestamp": "เวลา", "line_key": "ไลน์",
-                        "risk": "Risk Score", "status": "Status", "reasons": "สาเหตุ",
-                    }),
-                    use_container_width=True, hide_index=True,
+        with b1:
+            st.markdown("### Top Reasons")
+            reason_series = (
+                hist_df["reasons"]
+                .str.split(", ")
+                .explode()
+                .dropna()
+            )
+            reason_df = (
+                reason_series.value_counts()
+                .reset_index()
+            )
+            reason_df.columns = ["Reason", "Count"]
+            st.dataframe(reason_df.head(10), use_container_width=True, hide_index=True)
+
+        with b2:
+            st.markdown("### Hourly Hotspot")
+            hourly_df = hist_df.copy()
+            hourly_df["hour"] = hourly_df["created_at"].dt.hour
+            hourly_summary = (
+                hourly_df.groupby("hour", as_index=False)
+                .agg(
+                    avg_risk=("risk", "mean"),
+                    alerts=("status", lambda s: int((s.isin(["WARNING", "HIGH RISK"])).sum()))
                 )
-            else:
-                st.success("ไม่มี HIGH RISK events ในช่วงเวลาที่เลือก ✅")
+                .set_index("hour")
+            )
+            st.line_chart(hourly_summary, use_container_width=True)
 
-            # ── 5. Export ───────────────────────────────────────────────────
-            st.markdown("---")
-            st.markdown("#### Export ข้อมูล")
+        st.markdown("### Safety Score by Line")
+        safety_df = hist_df.groupby("line_key", as_index=False).agg(
+            avg_risk=("risk", "mean"),
+            helmet_yes_rate=("helmet", lambda s: round((s == "YES").mean() * 100, 2)),
+            high_risk_count=("status", lambda s: int((s == "HIGH RISK").sum())),
+            warning_count=("status", lambda s: int((s == "WARNING").sum()))
+        )
+        safety_df["safety_score"] = (
+            100
+            - safety_df["avg_risk"]
+            - (safety_df["high_risk_count"] * 0.5)
+            - (safety_df["warning_count"] * 0.2)
+            + (safety_df["helmet_yes_rate"] * 0.1)
+        ).clip(lower=0, upper=100).round(1)
 
-            e1, e2 = st.columns(2)
-            with e1:
-                st.download_button(
-                    label="⬇️ Download raw CSV",
-                    data=df_hist.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=f"smartsafe_history_{period_label.replace(' ','_')}.csv",
-                    mime="text/csv",
-                )
-            with e2:
-                if not df_summary.empty:
-                    st.download_button(
-                        label="⬇️ Download Alert Summary CSV",
-                        data=df_summary.to_csv(index=False).encode("utf-8-sig"),
-                        file_name=f"smartsafe_alerts_{period_label.replace(' ','_')}.csv",
-                        mime="text/csv",
-                    )
+        st.dataframe(
+            safety_df.sort_values("safety_score", ascending=False),
+            use_container_width=True,
+            hide_index=True
+        )
 
-            # ── 6. Predictive 7-day rolling score ──────────────────────────
-            st.markdown("---")
-            st.markdown("#### 📈 Predictive Risk Score (7-day rolling average)")
-            st.caption("ค่าเฉลี่ย rolling 7 วัน — บ่งชี้แนวโน้มความเสี่ยงล่วงหน้าเบื้องต้น")
+        st.markdown("### Pattern-based AI Insight")
+        insight_lines = []
+        for lk in hist_df["line_key"].unique():
+            df_line = hist_df[hist_df["line_key"] == lk].copy()
+            insight_lines.append(ai_pattern_recommendation(df_line, lk))
+        for msg in insight_lines:
+            st.info(msg)
 
-            df_pred = query_rolling_risk(selected_lines, days)
-            if not df_pred.empty:
-                df_pred["date"] = pd.to_datetime(df_pred["date"])
-                pred_frames = []
-                for lk in selected_lines:
-                    sub = (
-                        df_pred[df_pred["line_key"] == lk]
-                        .sort_values("date")
-                        .set_index("date")
-                    )
-                    sub[f"rolling_{lk}"] = sub["avg_risk"].rolling(7, min_periods=1).mean()
-                    pred_frames.append(sub[[f"rolling_{lk}"]])
-                if pred_frames:
-                    st.line_chart(
-                        pd.concat(pred_frames, axis=1).ffill(),
-                        use_container_width=True,
-                    )
+        st.markdown("### Raw Historical Data")
+        display_df = hist_df.copy()
+        display_df["created_at"] = display_df["created_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-# -------------------------
-# AUTO-REFRESH (end of script)
-# Pauses 2 s then triggers a full rerun — native Streamlit, no extra libs.
-# Skipped when user is on the Historical tab to avoid interrupting analysis.
-# -------------------------
-if st.session_state.get("active_tab", "live") != "historical":
-    time.sleep(REFRESH_INTERVAL)
-    st.rerun()
+        csv_data = to_csv_bytes(display_df)
+        st.download_button(
+            "Download Historical CSV",
+            data=csv_data,
+            file_name=f"smartsafe_history_{selected_history_line.replace(' ', '_').lower()}_{history_days}d.csv",
+            mime="text/csv"
+        )
