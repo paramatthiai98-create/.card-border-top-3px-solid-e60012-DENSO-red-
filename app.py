@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 # PAGE CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="SmartSafe Co-Pilot Dashboard",
+    page_title="SmartSafe: AI Decision Support System for Factory Safety",
     layout="wide"
 )
 
