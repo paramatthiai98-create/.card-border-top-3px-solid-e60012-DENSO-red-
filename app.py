@@ -854,7 +854,7 @@ hist_transition_df = add_transition_columns(hist_df) if not hist_df.empty else p
 # =========================================================
 # HEADER
 # =========================================================
-st.title("SmartSafe Co-Pilot Dashboard")
+st.title("SmartSafe: AI Decision Support System for Factory Safety")
 st.caption("DENSO-style production safety monitoring across 4 lines with SQLite historical storage")
 
 if demo_mode:
